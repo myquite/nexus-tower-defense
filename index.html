@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>NEXUS // Tower Defense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="game"></canvas>
+
+  <!-- ================= AUDIO (always visible, above overlays) ================= -->
+  <div id="audioCtl" class="audio-ctl">
+    <button id="audioBtn" class="icon-btn brk" title="Music volume" aria-label="Music volume">♪</button>
+    <div id="audioPop" class="audio-pop brk hidden">
+      <button id="muteBtn" class="mute-btn" title="Mute">🔊</button>
+      <input id="volSlider" class="vol-slider" type="range" min="0" max="100" value="55"
+             aria-label="Music volume">
+      <span id="volValue" class="vol-value">55</span>
+    </div>
+    <div id="audioNote" class="audio-note brk hidden">No track loaded — add a file to /music</div>
+  </div>
+
+  <!-- ================= HUD ================= -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="wave-block">
+        <div class="wave-label">WAVE</div>
+        <div class="wave-num"><span id="waveNum">1</span></div>
+      </div>
+      <div class="stat-block">
+        <div class="stat"><span class="stat-ico">◈</span><span id="statCash">0</span></div>
+        <div class="stat"><span class="stat-ico">✷</span><span id="statKills">0</span></div>
+      </div>
+      <button id="pauseBtn" class="icon-btn brk" title="Pause (Esc)">❚❚</button>
+    </div>
+
+    <div class="hud-enemies">
+      <span id="enemiesLeft">0</span> HOSTILES
+    </div>
+
+    <div class="hud-bottom">
+      <div class="hp-wrap">
+        <div class="hp-bar"><div id="hpFill" class="hp-fill"></div></div>
+        <div class="hp-text"><span id="hpText">100 / 100</span></div>
+      </div>
+      <div id="perkTray" class="perk-tray"></div>
+    </div>
+  </div>
+
+  <!-- ================= WAVE BANNER ================= -->
+  <div id="waveBanner" class="wave-banner hidden"><span></span></div>
+
+  <!-- ================= UPGRADE SCREEN ================= -->
+  <div id="upgradeScreen" class="overlay hidden">
+    <div class="up-inner">
+      <div class="up-head">
+        <span id="upTitle" class="up-title">WAVE 1 CLEARED</span>
+        <span class="up-sub">SELECT UPGRADE</span>
+      </div>
+      <div id="cards" class="cards"></div>
+      <button id="rerollBtn" class="reroll brk">⟳ REROLL <span id="rerollCount">(2)</span></button>
+    </div>
+  </div>
+
+  <!-- ================= SHOP ================= -->
+  <div id="shopScreen" class="overlay hidden">
+    <div class="up-inner shop-inner">
+      <div class="up-head">
+        <span class="up-title">SALVAGE BAY</span>
+        <span class="wallet">◈ <span id="shopWallet">0</span> SALVAGE</span>
+      </div>
+      <div id="shopList" class="shop-list brk"></div>
+      <button id="shopNextBtn" class="big-btn brk">NEXT WAVE →</button>
+    </div>
+  </div>
+
+  <!-- ================= START ================= -->
+  <div id="startScreen" class="overlay">
+    <div class="up-inner panel brk">
+      <div class="sys-line">DEFENSE GRID // STANDBY</div>
+      <div class="logo-hex">
+        <svg viewBox="0 0 100 100" width="104" height="104">
+          <polygon class="lh-outer" points="50,6 89,28 89,72 50,94 11,72 11,28" fill="none" stroke="#5ad8ff" stroke-width="3"/>
+          <polygon class="lh-inner" points="50,24 73,37 73,63 50,76 27,63 27,37" fill="none" stroke="#5ad8ff" stroke-width="2" opacity=".55"/>
+          <circle class="lh-core" cx="50" cy="50" r="7" fill="none" stroke="#eaf8ff" stroke-width="2.5"/>
+        </svg>
+      </div>
+      <h1 class="title">NEXUS</h1>
+      <p class="tagline">DEFEND THE CORE</p>
+      <button id="startBtn" class="big-btn brk">START DEFENSE</button>
+      <div class="hint">The core fires automatically. Survive the swarm and pick an upgrade after every wave.
+        <span class="keys"><b>ESC</b> PAUSE <b>SPACE</b> FAST-FORWARD</span></div>
+    </div>
+  </div>
+
+  <!-- ================= GAME OVER ================= -->
+  <div id="overScreen" class="overlay hidden">
+    <div class="up-inner panel brk dead-panel">
+      <div class="sys-line danger">CORE BREACH // RUN TERMINATED</div>
+      <h1 class="title dead">CORE BREACHED</h1>
+      <div class="score-grid">
+        <div class="pod brk"><i>◆</i><span id="ovWave">0</span><small>WAVES</small></div>
+        <div class="pod brk"><i>✷</i><span id="ovKills">0</span><small>KILLS</small></div>
+        <div class="pod brk"><i>◈</i><span id="ovCash">0</span><small>SALVAGE</small></div>
+      </div>
+      <div id="ovBest" class="best">BEST WAVE: 0</div>
+      <button id="retryBtn" class="big-btn brk">REDEPLOY</button>
+    </div>
+  </div>
+
+  <!-- ================= PAUSE ================= -->
+  <div id="pauseScreen" class="overlay hidden">
+    <div class="up-inner panel brk">
+      <div class="sys-line">SYSTEM HOLD</div>
+      <h1 class="title small">PAUSED</h1>
+      <button id="resumeBtn" class="big-btn brk">RESUME</button>
+      <button id="quitBtn" class="ghost-btn">ABANDON RUN</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/utils.js"></script>
+<script src="js/config.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/music.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>

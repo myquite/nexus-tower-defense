@@ -1,0 +1,933 @@
+'use strict';
+
+const MAX_PARTICLES = 420;
+
+/* ============================================================
+   GAME
+   ============================================================ */
+class Game {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    this.w = 0; this.h = 0;
+    this.state = 'start';
+    this.timeScale = 1;
+    this.shakeAmt = 0;
+    this.towerRadius = 34;
+
+    this.particlePool = new Pool(() => new Particle());
+    this.textPool = new Pool(() => new FloatText());
+
+    this.drifters = [];
+    this.best = +(localStorage.getItem('nexus_best') || 0);
+
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+
+    this.reset();
+  }
+
+  /* ------------------------------------------------------ */
+  resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    this.w = w; this.h = h;
+    this.canvas.width = Math.floor(w * this.dpr);
+    this.canvas.height = Math.floor(h * this.dpr);
+    this.cx = w / 2;
+    this.cy = h / 2;
+    this.spawnMargin = 60;
+    if (this.drifters.length === 0) {
+      const n = Math.round((w * h) / 26000);
+      for (let i = 0; i < n; i++) this.drifters.push(new Drifter(w, h));
+    }
+  }
+
+  reset() {
+    this.t = baseTower();
+    this.perkLevels = {};
+    this.shopLevels = {};
+    this.wave = 0;
+    this.kills = 0;
+    this.cash = 0;
+    this.rerolls = 2;
+
+    this.enemies = [];
+    this.bullets = [];
+    this.missiles = [];
+    this.meteors = [];
+    this.bolts = [];
+    this.rings = [];
+    this.particles = [];
+    this.texts = [];
+    this.orbs = [];
+
+    this.spawnQueue = [];
+    this.waveTime = 0;
+    this.turretAngle = -Math.PI / 2;
+    this.fireCd = 0;
+    this.missileCd = 0;
+    this.chainCd = 0;
+    this.meteorCd = 0;
+    this.novaCd = 0;
+    this.rayAngle = 0;
+    this.orbAngle = 0;
+    this.rangePulse = 0;
+    this.shakeAmt = 0;
+    this.hitFlash = 0;
+    this.ringOpen = 0;    // 0 = collapsed to a flat line, 1 = fully open ellipse
+    this.turretTrail = [];// recent barrel bearings, newest last — the boresight swing
+    this.barrelFlash = 0; // kicks to 1 on each shot, decays
+    this.hpShown = 1;     // eased HP fraction, so the integrity arc drains smoothly
+    this.heat = 0;        // barrel heat, 0..1 — climbs with sustained fire
+    this._detDepth = 0;   // detonation chain depth guard
+    this.betweenWaves = 0;
+  }
+
+  /* ============================================================
+     WAVE FLOW
+     ============================================================ */
+  startRun() {
+    this.reset();
+    this.state = 'playing';
+    Music.duck(false);
+    UI.hideShop();
+    UI.hideUpgrades();
+    UI.show(UI.el.hud);
+    UI.syncPerks(this);
+    this.nextWave();
+  }
+
+  nextWave() {
+    this.wave++;
+    const w = buildWave(this.wave);
+    this.scale = waveScale(this.wave);
+    this.spawnQueue = w.entries.map(e => ({ type: e.type, at: Math.max(0.4, e.delay + 0.6) }));
+    this.waveTime = 0;
+    this.isBossWave = w.boss;
+    UI.banner(w.boss ? `WAVE ${this.wave} — BOSS` : `WAVE ${this.wave}`, w.boss);
+    if (this.wave > this.best) {
+      this.best = this.wave;
+      localStorage.setItem('nexus_best', this.best);
+    }
+  }
+
+  waveCleared() {
+    return this.spawnQueue.length === 0 && this.enemies.length === 0;
+  }
+
+  openUpgrades() {
+    this.state = 'upgrade';
+    Music.duck(true);
+    // +1 free reroll per wave, but never clamp below rerolls the player bought in the shop
+    this.rerolls = Math.min(6, this.rerolls + 1);
+    this.rollChoices();
+  }
+
+  rollChoices() {
+    const available = UPGRADES.filter(u => {
+      const lv = this.perkLevels[u.id] || 0;
+      if (lv >= u.max) return false;
+      if (u.unlock && !u.unlock(this)) return false;
+      return true;
+    });
+
+    // weighted pick of 2 distinct upgrades, biased toward unowned ones early
+    const pool = [];
+    for (const u of available) {
+      const lv = this.perkLevels[u.id] || 0;
+      let w = u.weight;
+      if (lv === 0) w *= 1.6;
+      for (let i = 0; i < Math.round(w); i++) pool.push(u);
+    }
+
+    const picked = [];
+    let guard = 0;
+    while (picked.length < 2 && pool.length && guard++ < 400) {
+      const u = pick(pool);
+      if (!picked.includes(u)) picked.push(u);
+    }
+    if (picked.length === 0) picked.push(UPGRADE_BY_ID.damage);
+
+    this.choices = picked;
+    UI.showUpgrades(this.wave, picked, this.perkLevels,
+      this.rerolls,
+      u => this.takeUpgrade(u),
+      () => { if (this.rerolls > 0) { this.rerolls--; this.rollChoices(); } });
+  }
+
+  takeUpgrade(u) {
+    const lv = (this.perkLevels[u.id] || 0) + 1;
+    this.perkLevels[u.id] = lv;
+    u.apply(this.t, lv);
+    this.syncOrbs();
+    UI.syncPerks(this);
+    UI.hideUpgrades();
+    this.rings.push(new Ring(this.cx, this.cy, this.t.range, u.color, 0.7));
+    this.openShop();
+  }
+
+  /* ---- shop ---- */
+  openShop() {
+    this.state = 'shop';
+    UI.showShop(this, item => this.buy(item), () => this.closeShop());
+  }
+
+  buy(item) {
+    const lv = this.shopLevels[item.id] || 0;
+    if (lv >= item.max) return;
+    if (item.enabled && !item.enabled(this.t, this)) return;
+    const cost = item.cost(lv, this);
+    if (this.cash < cost) return;
+
+    this.cash -= cost;
+    this.shopLevels[item.id] = lv + 1;
+    item.apply(this.t, this);
+    this.syncOrbs();
+    UI.syncShop(this);
+  }
+
+  closeShop() {
+    UI.hideShop();
+    Music.duck(false);
+    this.state = 'playing';
+    this.nextWave();
+  }
+
+  syncOrbs() {
+    while (this.orbs.length < this.t.orbCount) this.orbs.push({ a: (this.orbs.length / Math.max(1, this.t.orbCount)) * TAU });
+    while (this.orbs.length > this.t.orbCount) this.orbs.pop();
+    // even redistribution
+    this.orbs.forEach((o, i) => o.a = (i / this.orbs.length) * TAU);
+  }
+
+  gameOver() {
+    this.state = 'over';
+    Music.duck(true);
+    this.burst(this.cx, this.cy, C.cyan, 70, 3.5);
+    this.shake(30);
+    UI.hide(UI.el.hud);
+    UI.showGameOver(this, this.best);
+  }
+
+  /* ============================================================
+     HELPERS USED BY ENTITIES
+     ============================================================ */
+  shake(a) { this.shakeAmt = Math.min(34, this.shakeAmt + a); }
+
+  /** A point just beyond the viewport edge, in a random direction from the core. */
+  spawnPoint() {
+    const a = rand(TAU);
+    const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+    const m = this.spawnMargin;
+    const rx = c > 1e-4 ? (this.w / 2 + m) / c : Infinity;
+    const ry = s > 1e-4 ? (this.h / 2 + m) / s : Infinity;
+    const r = Math.min(rx, ry);
+    return { x: this.cx + Math.cos(a) * r, y: this.cy + Math.sin(a) * r };
+  }
+
+  spark(x, y, color, life) {
+    if (this.particles.length > MAX_PARTICLES) return;
+    this.particles.push(this.particlePool.get().init(x, y, rand(-40, 40), rand(-40, 40), life || 0.4, rand(2, 4), color));
+  }
+
+  burst(x, y, color, count, power) {
+    power = power || 1;
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length > MAX_PARTICLES) break;
+      const a = rand(TAU), s = rand(60, 300) * power;
+      this.particles.push(this.particlePool.get().init(
+        x, y, Math.cos(a) * s, Math.sin(a) * s, rand(0.25, 0.6) * power, rand(2, 5), color));
+    }
+  }
+
+  spawnDamageText(x, y, amount, crit, capped) {
+    if (this.texts.length > 40) return;
+    // capped hits skip the sampling — the player needs to see armour working
+    if (!crit && !capped && Math.random() > 0.32) return;
+    const color = capped ? C.steel : (crit ? C.gold : '#cfe9ff');
+    this.texts.push(this.textPool.get().init(x, y, fmt(amount), color, crit));
+  }
+
+  damageTower(dmg) {
+    if (this.state !== 'playing') return;
+    this.t.hp -= dmg;
+    this.hitFlash = 1;
+    if (this.t.hp <= 0) { this.t.hp = 0; this.gameOver(); }
+  }
+
+  nearestEnemy(x, y, range, ignoreRange) {
+    let best = null, bd = ignoreRange ? Infinity : range * range;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const d = dist2(x, y, e.x, e.y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  /** Prefer the closest enemy to the core inside range (highest threat). */
+  targetEnemy() {
+    let best = null, bd = Infinity;
+    const r2 = this.t.range * this.t.range;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const d = dist2(this.cx, this.cy, e.x, e.y);
+      if (d <= r2 && d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  areaDamage(x, y, radius, dmg, color, knock) {
+    const r2 = radius * radius;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      if (dist2(x, y, e.x, e.y) < r2) {
+        e.hurt(dmg, this, false);
+        if (knock) e.knockback(x, y, knock);
+      }
+    }
+  }
+
+  killEnemy(e) {
+    if (e.dead) return;
+    e.dead = true;
+    this.kills++;
+
+    /**
+     * Detonation releases a slice of the victim's own max HP, so the blast
+     * scales with the wave curve for free. A blast can kill, which re-enters
+     * killEnemy — that chain reaction is the point of the card, but it needs a
+     * depth bound or a dense formation would recurse until the stack gives out.
+     */
+    if (this.t.detonate > 0 && this._detDepth < 3) {
+      this._detDepth++;
+      this.areaDamage(e.x, e.y, 74, e.maxHp * this.t.detonate, C.orange);
+      this.rings.push(new Ring(e.x, e.y, 74, C.orange, 0.28));
+      this._detDepth--;
+    }
+    this.cash += e.cash * this.t.cashMult;
+    if (this.t.lifesteal) this.t.hp = Math.min(this.t.maxHp, this.t.hp + this.t.lifesteal);
+    this.burst(e.x, e.y, e.color, e.boss ? 40 : (e.sizeMul < 1 ? 5 : 10), e.boss ? 2.6 : 1);
+    if (e.boss) { this.shake(18); this.rings.push(new Ring(e.x, e.y, 150, C.pink, 0.6)); }
+
+    /**
+     * Splitters come apart along the fracture lines they were drawing all
+     * along. Each piece is placed at the centroid of the wedge it occupied
+     * (0.375 of the way out toward its vertex), carries the rotation that
+     * wedge already had, and inherits the parent's spin — so for the first
+     * instant the three shards still form the triangle, and only then fly
+     * apart. Random scatter would throw that away.
+     */
+    if (e.def.splits && e.sizeMul >= 1) {
+      const n = e.def.splits;
+      for (let i = 0; i < n; i++) {
+        const local = -Math.PI / 2 + (i / n) * TAU;   // toward this piece's vertex
+        const world = local + e.angle;
+        const r = e.size * 0.42;
+        const s = new Enemy('shard',
+          e.x + Math.cos(world) * r, e.y + Math.sin(world) * r, this.scale, 0.85);
+        s.angle = e.angle + (i / n) * TAU;   // keep the wedge's own orientation
+        s.spin = e.spin;                      // one shape coming apart, not three arrivals
+        s.knockback(e.x, e.y, 150);
+        this.enemies.push(s);
+      }
+    }
+  }
+
+  /* ============================================================
+     WEAPON SYSTEMS
+     ============================================================ */
+  fireGun(dt) {
+    const t = this.t;
+    this.fireCd -= dt;
+
+    const target = this.targetEnemy();
+    if (target) {
+      const want = Math.atan2(target.y - this.cy, target.x - this.cx);
+      this.turretAngle = turnToward(this.turretAngle, want, 11 * dt);
+    } else {
+      this.turretAngle += 0.45 * dt;
+    }
+
+    if (!target || this.fireCd > 0) return;
+
+    /**
+     * Carry the leftover cooldown instead of resetting it, and allow more than
+     * one volley per frame. Resetting to a full interval threw away the
+     * remainder, which quantised the real cadence to the frame rate rounded
+     * down: every rate from 30/s to 59/s fired at exactly 30/s, so whole bands
+     * of fire-rate purchases bought nothing at all.
+     */
+    const interval = 1 / Math.min(t.fireRate, MAX_FIRE_RATE);
+    let volleys = 0;
+    while (this.fireCd <= 0 && volleys < MAX_VOLLEYS_PER_FRAME) {
+      this.volley(t);
+      this.fireCd += interval;
+      volleys++;
+    }
+    // a long stall shouldn't leave the gun owing shots it can never repay
+    if (this.fireCd <= 0) this.fireCd = interval;
+  }
+
+  /** One trigger pull: every projectile in the multishot spread. */
+  volley(t) {
+    this.barrelFlash = 1;   // the visor boresight pulses on the shot
+    // heat is per-projectile, so multishot runs the barrel hotter than a single
+    this.heat = Math.min(1, this.heat + 0.05 + 0.02 * t.shots);
+
+    const n = t.shots;
+    const spread = Math.min(0.5, 0.09 * (n - 1));
+    for (let i = 0; i < n; i++) {
+      const off = n === 1 ? 0 : lerp(-spread, spread, i / (n - 1));
+      const crit = chance(t.critChance);
+      const dmg = t.damage * (crit ? t.critMult : 1);
+      const a = this.turretAngle + off + rand(-0.012, 0.012);
+      const muzzle = this.towerRadius + 8;
+      this.bullets.push(new Bullet(
+        this.cx + Math.cos(a) * muzzle, this.cy + Math.sin(a) * muzzle,
+        a, t.bulletSpeed, dmg, t.pierce, crit, t.bounces));
+    }
+    this.spark(this.cx + Math.cos(this.turretAngle) * (this.towerRadius + 10),
+               this.cy + Math.sin(this.turretAngle) * (this.towerRadius + 10), C.cyan, 0.16);
+  }
+
+  /**
+   * How far a hostile can ever be from the core: the spawn ring is the
+   * viewport rectangle pushed out by the spawn margin, so its far corner is
+   * the point past which extra range can never reach anything.
+   */
+  maxThreatDistance() {
+    return Math.hypot(this.w / 2 + this.spawnMargin, this.h / 2 + this.spawnMargin);
+  }
+
+  fireMissiles(dt) {
+    const t = this.t;
+    if (t.missileCount <= 0) return;
+    this.missileCd -= dt;
+    if (this.missileCd > 0) return;
+    if (!this.enemies.length) return;
+    this.missileCd = t.missileCd;
+
+    for (let i = 0; i < t.missileCount; i++) {
+      const a = (i / t.missileCount) * TAU + rand(-0.2, 0.2);
+      const m = new Missile(this.cx + Math.cos(a) * 20, this.cy + Math.sin(a) * 20,
+        a, t.missileDmg, t.missileRadius);
+      m.speed = rand(90, 160);
+      this.missiles.push(m);
+    }
+    this.shake(3);
+  }
+
+  fireChain(dt) {
+    const t = this.t;
+    if (t.chainJumps <= 0) return;
+    this.chainCd -= dt;
+    if (this.chainCd > 0) return;
+
+    const first = this.targetEnemy();
+    if (!first) return;
+    this.chainCd = t.chainCd;
+
+    const pts = [{ x: this.cx, y: this.cy }];
+    const hit = new Set();
+    let cur = first;
+    for (let j = 0; j < t.chainJumps && cur; j++) {
+      hit.add(cur);
+      pts.push({ x: cur.x, y: cur.y });
+      cur.hurt(t.chainDmg, this, false);
+      cur.slowT = 0.5;
+      // next nearest unhit within jump range
+      let best = null, bd = 200 * 200;
+      for (const e of this.enemies) {
+        if (e.dead || hit.has(e)) continue;
+        const d = dist2(cur.x, cur.y, e.x, e.y);
+        if (d < bd) { bd = d; best = e; }
+      }
+      cur = best;
+    }
+    this.bolts.push(new Bolt(pts, C.purple));
+  }
+
+  fireMeteors(dt) {
+    const t = this.t;
+    if (t.meteorCount <= 0) return;
+    this.meteorCd -= dt;
+    if (this.meteorCd > 0) return;
+    if (!this.enemies.length) return;
+    this.meteorCd = t.meteorCd;
+
+    for (let i = 0; i < t.meteorCount; i++) {
+      const e = pick(this.enemies);
+      this.meteors.push(new Meteor(e.x + rand(-30, 30), e.y + rand(-30, 30), t.meteorDmg, t.meteorRadius));
+    }
+  }
+
+  fireNova(dt) {
+    const t = this.t;
+    if (t.novaDmg <= 0) return;
+    this.novaCd -= dt;
+    if (this.novaCd > 0) return;
+    this.novaCd = t.novaCd;
+    const r = t.range * 0.9;
+    this.areaDamage(this.cx, this.cy, r, t.novaDmg, C.cyan, t.novaKnock);
+    this.rings.push(new Ring(this.cx, this.cy, r, C.cyan, 0.55));
+    this.shake(6);
+  }
+
+  updateRays(dt) {
+    const t = this.t;
+    if (t.rayCount <= 0) return;
+    this.rayAngle += t.raySpeed * dt;
+    const len = t.range * 1.15;
+    const width = 13;
+    for (let i = 0; i < t.rayCount; i++) {
+      const a = this.rayAngle + (i / t.rayCount) * TAU;
+      const ex = this.cx + Math.cos(a) * len, ey = this.cy + Math.sin(a) * len;
+      for (const e of this.enemies) {
+        if (e.dead) continue;
+        const r = width + e.size * 0.5;
+        if (distToSegment2(e.x, e.y, this.cx, this.cy, ex, ey) < r * r) {
+          e.hurt(t.rayDps * dt, this, false);
+          if (Math.random() < 0.25) this.spark(e.x, e.y, C.gold, 0.25);
+        }
+      }
+    }
+  }
+
+  updateOrbs(dt) {
+    if (!this.orbs.length) return;
+    const t = this.t;
+    this.orbAngle += t.orbSpeed * dt;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      e.orbCd = (e.orbCd || 0) - dt;
+      if (e.orbCd > 0) continue;
+      for (const o of this.orbs) {
+        const a = this.orbAngle + o.a;
+        const ox = this.cx + Math.cos(a) * t.orbRadius;
+        const oy = this.cy + Math.sin(a) * t.orbRadius;
+        const r = 11 + e.size * 0.5;
+        if (dist2(ox, oy, e.x, e.y) < r * r) {
+          e.hurt(t.orbDmg, this, false);
+          e.knockback(this.cx, this.cy, 40);
+          e.orbCd = 0.28;
+          this.burst(ox, oy, C.cyan, 4, 0.5);
+          break;
+        }
+      }
+    }
+  }
+
+  /* ============================================================
+     MAIN UPDATE
+     ============================================================ */
+  update(dt) {
+    // ambient always animates
+    for (const d of this.drifters) d.update(dt, this.w, this.h);
+    this.hitFlash = Math.max(0, this.hitFlash - dt * 2.6);
+    this.shakeAmt *= Math.pow(0.0008, dt);
+    this.rangePulse += dt;
+
+    // Threat ring: opens while hostiles are live, falls shut to a flat line once
+    // the sky is clear. Eased rather than snapped so clearing a wave reads as the
+    // visor powering the display down.
+    const threats = this.enemies.length + this.spawnQueue.length;
+    // Pausing must not wipe the threat picture — the display stays up for any
+    // live state, and only folds shut when the sector is actually clear.
+    const want = (this.state !== 'over' && threats > 0) ? 1 : 0;
+    this.ringOpen += (want - this.ringOpen) * (1 - Math.pow(0.008, dt));
+    // Boresight history. Angles are stored raw and drawn individually, so a
+    // swing across the +/-PI seam needs no unwrapping.
+    this.barrelFlash = Math.max(0, this.barrelFlash - dt * 4.5);
+    this.heat = Math.max(0, this.heat - dt * 0.85);
+    if (this.state === 'playing') {
+      this.turretTrail.push(this.turretAngle);
+      if (this.turretTrail.length > 14) this.turretTrail.shift();
+    }
+
+    // Integrity arc chases the real value rather than snapping, so a big hit
+    // reads as the arc being driven back instead of just becoming shorter.
+    const hpFrac = clamp(this.t.hp / this.t.maxHp, 0, 1);
+    this.hpShown += (hpFrac - this.hpShown) * (1 - Math.pow(0.0001, dt));
+
+    if (this.state !== 'playing') {
+      // let effects settle on the upgrade screen
+      this.stepEffects(dt * 0.4);
+      return;
+    }
+
+    const t = this.t;
+    this.waveTime += dt;
+
+    // regen
+    if (t.regen) t.hp = Math.min(t.maxHp, t.hp + t.regen * dt);
+
+    // spawns
+    while (this.spawnQueue.length && this.spawnQueue[0].at <= this.waveTime) {
+      const s = this.spawnQueue.shift();
+      const p = this.spawnPoint();
+      this.enemies.push(new Enemy(s.type, p.x, p.y, this.scale, 1));
+    }
+
+    // weapons
+    this.fireGun(dt);
+    this.fireMissiles(dt);
+    this.fireChain(dt);
+    this.fireMeteors(dt);
+    this.fireNova(dt);
+    this.updateRays(dt);
+    this.updateOrbs(dt);
+
+    // entities
+    for (const e of this.enemies) if (!e.dead) e.update(dt, this);
+    for (const b of this.bullets) if (!b.dead) b.update(dt, this);
+    for (const m of this.missiles) if (!m.dead) m.update(dt, this);
+    for (const m of this.meteors) if (!m.dead) m.update(dt, this);
+    this.stepEffects(dt);
+
+    this.prune();
+
+    if (this.state === 'playing' && this.waveCleared() && this.waveTime > 1) {
+      this.openUpgrades();
+    }
+
+    UI.syncHud(this);
+  }
+
+  stepEffects(dt) {
+    for (const b of this.bolts) b.update(dt);
+    for (const r of this.rings) r.update(dt);
+    for (const p of this.particles) p.update(dt);
+    for (const f of this.texts) f.update(dt);
+  }
+
+  prune() {
+    this.enemies = this.enemies.filter(e => !e.dead);
+    this.bullets = this.bullets.filter(b => !b.dead && b.x > -80 && b.x < this.w + 80 && b.y > -80 && b.y < this.h + 80);
+    this.missiles = this.missiles.filter(m => !m.dead);
+    this.meteors = this.meteors.filter(m => !m.dead);
+    this.bolts = this.bolts.filter(b => !b.dead);
+    this.rings = this.rings.filter(r => !r.dead);
+
+    const keptP = [];
+    for (const p of this.particles) { if (p.dead) this.particlePool.put(p); else keptP.push(p); }
+    this.particles = keptP;
+
+    const keptT = [];
+    for (const f of this.texts) { if (f.dead) this.textPool.put(f); else keptT.push(f); }
+    this.texts = keptT;
+  }
+
+  /* ============================================================
+     RENDER
+     ============================================================ */
+  draw() {
+    const ctx = this.ctx;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.clearRect(0, 0, this.w, this.h);
+
+    if (this.shakeAmt > 0.4) {
+      ctx.translate(rand(-this.shakeAmt, this.shakeAmt), rand(-this.shakeAmt, this.shakeAmt));
+    }
+
+    this.drawGrid(ctx);
+    for (const d of this.drifters) d.draw(ctx);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    this.drawRange(ctx);
+    for (const r of this.rings) r.draw(ctx);
+    for (const m of this.meteors) m.draw(ctx);
+    this.drawRays(ctx);
+    for (const b of this.bolts) b.draw(ctx);
+    for (const e of this.enemies) e.draw(ctx);
+    for (const b of this.bullets) b.draw(ctx);
+    for (const m of this.missiles) m.draw(ctx);
+    for (const p of this.particles) p.draw(ctx);
+    this.drawOrbs(ctx);
+    this.drawTower(ctx);
+
+    ctx.restore();
+
+    for (const f of this.texts) f.draw(ctx);
+
+    // damage vignette
+    if (this.hitFlash > 0.01) {
+      const g = ctx.createRadialGradient(this.cx, this.cy, Math.min(this.w, this.h) * 0.25,
+        this.cx, this.cy, Math.max(this.w, this.h) * 0.72);
+      g.addColorStop(0, 'rgba(255,45,85,0)');
+      g.addColorStop(1, `rgba(255,45,85,${0.34 * this.hitFlash})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, this.w, this.h);
+    }
+
+    // Visor HUD last, on a clean transform — the shake is the world moving
+    // inside the helmet, not the helmet moving.
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    Visor.draw(ctx, this);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  drawGrid(ctx) {
+    const step = 64;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(90,216,255,.045)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = (this.cx % step); x < this.w; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, this.h); }
+    for (let y = (this.cy % step); y < this.h; y += step) { ctx.moveTo(0, y); ctx.lineTo(this.w, y); }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawRange(ctx) {
+    const r = this.t.range;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(90,216,255,.10)';
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = 'rgba(90,216,255,.30)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, TAU); ctx.stroke();
+
+    // slow sweep highlight
+    ctx.globalAlpha = 0.18;
+    ctx.lineWidth = 3;
+    const a = this.rangePulse * 0.6;
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, r, a, a + 0.7); ctx.stroke();
+
+    if (this.t.slowPct > 0) {
+      ctx.globalAlpha = 0.06 + 0.02 * Math.sin(this.rangePulse * 2);
+      ctx.fillStyle = C.cyan;
+      ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  drawRays(ctx) {
+    const t = this.t;
+    if (t.rayCount <= 0) return;
+    const len = t.range * 1.15;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = 0; i < t.rayCount; i++) {
+      const a = this.rayAngle + (i / t.rayCount) * TAU;
+      const ex = this.cx + Math.cos(a) * len, ey = this.cy + Math.sin(a) * len;
+      ctx.strokeStyle = 'rgba(255,203,51,.18)';
+      ctx.lineWidth = 34;
+      ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,203,51,.42)';
+      ctx.lineWidth = 16;
+      ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.strokeStyle = '#fff6d2';
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawOrbs(ctx) {
+    const t = this.t;
+    if (!this.orbs.length) return;
+    ctx.save();
+    for (const o of this.orbs) {
+      const a = this.orbAngle + o.a;
+      const x = this.cx + Math.cos(a) * t.orbRadius;
+      const y = this.cy + Math.sin(a) * t.orbRadius;
+      ctx.fillStyle = C.cyan;
+      ctx.globalAlpha = 0.28;
+      ctx.beginPath(); ctx.arc(x, y, 20, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(40,140,255,.95)';
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#dff4ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, TAU); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * THE CORE
+   * Same vector-neon vocabulary as before, but every layer now reads a real
+   * value instead of just spinning: plating burns down with HP, the gyro spins
+   * at your actual fire rate, the charge ring fills toward the next volley, and
+   * the barrel recoils and heats under sustained fire. Nothing here is
+   * decoration for its own sake — if it moves, it means something.
+   *
+   * Drawn with neonStroke rather than shadowBlur for the same reason the
+   * entities are: shadowBlur is the most expensive per-draw call in canvas, and
+   * this is the one object on screen that is always visible.
+   */
+  drawTower(ctx) {
+    const R = this.towerRadius;
+    const t = this.t;
+    const flash = this.barrelFlash;
+    const heat = this.heat;
+    const hpFrac = clamp(t.hp / t.maxHp, 0, 1);
+    const hurt = this.hitFlash > 0.2;
+
+    // how close the next volley is — drives the charge ring and the core pulse
+    const interval = 1 / Math.min(t.fireRate, MAX_FIRE_RATE);
+    const charge = clamp(1 - this.fireCd / interval, 0, 1);
+
+    ctx.save();
+    ctx.translate(this.cx, this.cy);
+
+    /* ---- integrity plating: six shells that burn out as the core is hit ---- */
+    for (let i = 0; i < 6; i++) {
+      const lit = clamp(hpFrac * 6 - i, 0, 1);
+      if (lit <= 0.002) continue;
+      const a0 = (i / 6) * TAU + 0.13;
+      const a1 = ((i + 1) / 6) * TAU - 0.13;
+      neonStroke(ctx, c => c.arc(0, 0, R * 1.36, a0, a1),
+        lit > 0.4 ? C.teal : C.red, 2.2, 3, 0.22 + 0.5 * lit);
+    }
+
+    /* ---- gyro: outer shell fixed, inner rings spun by the real fire rate ---- */
+    const rate = Math.min(t.fireRate, MAX_FIRE_RATE);
+    const spin = this.rangePulse * (0.4 + rate * 0.06);
+    const hex = (rad, rot) => c => {
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU + rot;
+        const x = Math.cos(a) * rad, y = Math.sin(a) * rad;
+        i ? c.lineTo(x, y) : c.moveTo(x, y);
+      }
+      c.closePath();
+    };
+
+    neonStroke(ctx, hex(R, 0), hurt ? '#ffffff' : C.cyan, 3, 3.4, 0.95);
+
+    // vertex ticks, the same mark the visor uses for its cardinals
+    neonStroke(ctx, c => {
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU;
+        c.moveTo(Math.cos(a) * R * 1.06, Math.sin(a) * R * 1.06);
+        c.lineTo(Math.cos(a) * R * 1.18, Math.sin(a) * R * 1.18);
+      }
+    }, C.cyan, 1.4, 2.6, 0.5);
+
+    neonStroke(ctx, hex(R * 0.68, -spin * 0.5), C.cyan, 1.6, 2.6, 0.45);
+    neonStroke(ctx, hex(R * 0.44, spin * 0.8), C.cyan, 1.4, 2.6, 0.35);
+
+    /* ---- charge ring: sweeps round as the next volley comes up ---- */
+    if (rate > 0) {
+      const a0 = -Math.PI / 2;
+      neonStroke(ctx, c => c.arc(0, 0, R * 0.86, a0, a0 + charge * TAU),
+        charge > 0.985 ? C.white : C.gold, 2, 3, 0.35 + 0.5 * charge);
+    }
+
+    /* ---- core: brightens as it comes up to charge ---- */
+    neonStroke(ctx, c => c.arc(0, 0, R * 0.19, 0, TAU),
+      C.white, 2.4 + 2 * charge, 3.2, 0.5 + 0.45 * charge);
+
+    /* ---- barrel ---- */
+    ctx.save();
+    ctx.rotate(this.turretAngle);
+
+    const recoil = -8 * flash;             // kicks back into the housing
+    const bx = R - 6 + recoil;
+    const len = 26;
+
+    // housing
+    neonStroke(ctx, c => {
+      c.moveTo(bx, -5.5); c.lineTo(bx + len, -3.2);
+      c.lineTo(bx + len, 3.2); c.lineTo(bx, 5.5); c.closePath();
+    }, hurt ? '#ffffff' : C.cyan, 2, 3, 0.9);
+
+    // bore — the hot line down the middle
+    neonStroke(ctx, c => { c.moveTo(bx + 3, 0); c.lineTo(bx + len - 1, 0); },
+      C.white, 2 + 1.8 * heat, 2.6, 0.5 + 0.45 * heat);
+
+    // heat wash. Additive, so a hard-worked barrel goes cyan -> gold -> white
+    if (heat > 0.01) {
+      neonStroke(ctx, c => { c.moveTo(bx + 5, 0); c.lineTo(bx + len, 0); },
+        C.orange, 4, 3, 0.45 * heat);
+    }
+
+    // muzzle bloom on the shot
+    if (flash > 0.01) {
+      const m = bx + len;
+      ctx.globalAlpha = flash * 0.8;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(m, 0);
+      ctx.lineTo(m + 15 * flash, -7 * flash);
+      ctx.lineTo(m + 23 * flash, 0);
+      ctx.lineTo(m + 15 * flash, 7 * flash);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+(function boot() {
+  UI.init();
+  Music.init();
+  UI.syncAudio();
+  const game = new Game(document.getElementById('game'));
+  window.game = game;
+
+  let last = performance.now();
+  let ff = false;
+
+  function frame(now) {
+    let dt = (now - last) / 1000;
+    last = now;
+    dt = Math.min(dt, 1 / 20);           // clamp big tab-switch gaps
+    const steps = ff ? 2 : 1;
+    for (let i = 0; i < steps; i++) game.update(dt);
+    game.draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  /* ---- buttons ---- */
+  // both are real user gestures, so this is where audio is allowed to begin
+  UI.el.startBtn.onclick = () => { UI.hide(UI.el.startScreen); Music.start(); game.startRun(); };
+  UI.el.retryBtn.onclick = () => { UI.hide(UI.el.overScreen); Music.start(); game.startRun(); };
+
+  const pause = () => {
+    if (game.state !== 'playing') return;
+    game._resumeState = game.state;
+    game.state = 'paused';
+    Music.suspend();
+    UI.show(UI.el.pauseScreen);
+  };
+  const resume = () => {
+    if (game.state !== 'paused') return;
+    game.state = 'playing';
+    Music.resume();
+    UI.hide(UI.el.pauseScreen);
+  };
+
+  UI.el.pauseBtn.onclick = pause;
+  UI.el.resumeBtn.onclick = resume;
+  UI.el.quitBtn.onclick = () => {
+    UI.hide(UI.el.pauseScreen);
+    UI.hide(UI.el.hud);
+    game.state = 'start';
+    game.reset();
+    UI.show(UI.el.startScreen);
+  };
+
+  window.addEventListener('keydown', ev => {
+    if (ev.code === 'Escape') { game.state === 'paused' ? resume() : pause(); }
+    if (ev.code === 'Space') { ev.preventDefault(); ff = true; }
+    if (ev.code === 'Digit1' && game.state === 'upgrade') game.takeUpgrade(game.choices[0]);
+    if (ev.code === 'Digit2' && game.state === 'upgrade' && game.choices[1]) game.takeUpgrade(game.choices[1]);
+    if (ev.code === 'Enter' && game.state === 'shop') game.closeShop();
+  });
+  window.addEventListener('keyup', ev => { if (ev.code === 'Space') ff = false; });
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+})();

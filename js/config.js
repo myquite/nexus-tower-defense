@@ -1,0 +1,490 @@
+'use strict';
+
+/* ============================================================
+   PALETTE
+   ============================================================ */
+const C = {
+  cyan:   '#5ad8ff',
+  teal:   '#3ff0c8',
+  gold:   '#ffcb33',
+  red:    '#ff3b5c',
+  pink:   '#ff2d7a',
+  purple: '#a678ff',
+  orange: '#ff9838',
+  white:  '#eaf8ff',
+  steel:  '#9fb6d1',
+};
+
+/* ============================================================
+   EFFECTIVE CEILINGS
+   Stats that stop doing anything past a point. Making the limit explicit means
+   the shop can refuse to sell a dead upgrade instead of taking the salvage and
+   changing nothing.
+
+   MAX_FIRE_RATE — a design cap, not a frame-rate one. The gun can only fire on
+   an update tick, so without a stated ceiling the real cadence would be
+   whatever the display happens to run at: 60/s on a 60Hz panel, 120/s on a
+   120Hz one, and the same build would behave differently on different
+   hardware. Pinning it here keeps the cap deterministic.
+   ============================================================ */
+const MAX_FIRE_RATE = 60;          // shots per second
+const MAX_VOLLEYS_PER_FRAME = 4;   // guard against a long frame dumping a burst
+const MAX_CRIT_CHANCE = 0.85;      // matches the clamp in the crit upgrades
+
+/* ============================================================
+   TOWER BASE STATS
+   ============================================================ */
+function baseTower() {
+  return {
+    // core gun
+    damage: 10,
+    fireRate: 2.2,          // shots per second
+    range: 300,
+    bulletSpeed: 620,
+    shots: 1,               // multishot projectile count
+    pierce: 0,
+    critChance: 0.05,
+    critMult: 2,
+
+    // survivability
+    maxHp: 140,
+    hp: 140,
+    regen: 0,
+    lifesteal: 0,           // hp restored per kill
+    thorns: 0,              // damage reflected on contact
+
+    // orbiting blades
+    orbCount: 0,
+    orbDmg: 12,
+    orbRadius: 92,
+    orbSpeed: 1.9,
+
+    // homing missiles
+    missileCount: 0,
+    missileCd: 3.2,
+    missileDmg: 22,
+    missileRadius: 62,
+
+    // chain lightning
+    chainJumps: 0,
+    chainCd: 2.4,
+    chainDmg: 14,
+
+    // meteors
+    meteorCount: 0,
+    meteorCd: 4.5,
+    meteorDmg: 55,
+    meteorRadius: 96,
+
+    // death ray
+    rayCount: 0,
+    rayDps: 130,
+    raySpeed: 0.55,
+
+    // shockwave nova
+    novaCd: 5,
+    novaDmg: 0,      // 0 until Shockwave is taken — fireNova gates on this
+    novaBase: 34,    // what Shockwave adopts, so damage taken BEFORE it still counts
+    novaKnock: 90,
+
+    // utility
+    slowPct: 0,             // cryo field slow inside range
+    cashMult: 1,
+    capPierce: 0,           // raises the per-hit cap armoured units impose
+    detonate: 0,            // fraction of a victim's max HP released on death
+    bounces: 0,             // extra targets a bullet redirects to after a hit
+  };
+}
+
+/* ============================================================
+   MUSIC
+   Drop audio files in /music and list them here. Multiple tracks play
+   through in order and then loop back to the first; a single track just
+   loops. Paths are relative to index.html. Any track that fails to load
+   is skipped, and if none load the volume control reports "no track"
+   rather than pretending to play.
+   ============================================================ */
+const MUSIC_TRACKS = [
+  'music/The_Iron_Crown_Ambush.mp3',
+  'music/Level_One_Victory.mp3',
+  'music/Seven_Seconds_to_Impact.mp3',
+];
+
+/**
+ * Loop shaping. Most music isn't authored to loop — the last bar doesn't lead
+ * back into the first — so butting the end against the start gives an audible
+ * seam. Instead each pass is overlapped with the next and cross-faded on an
+ * equal-power curve, which hides the join entirely.
+ *
+ * List several tracks in MUSIC_TRACKS and the same crossfade carries you from
+ * one into the next, so the playlist is what fixes repetitiveness — a single
+ * 30-second track will always come back around in 30 seconds.
+ *
+ *   crossfade  seconds of overlap. Longer = smoother and more ambient, but eats
+ *              more of the track (effective loop = length - crossfade).
+ *   shuffle    randomise playlist order, reshuffled each time it wraps.
+ *   loopStart  skip an intro that shouldn't repeat (seconds). Single track only.
+ *   loopEnd    null = end of file. Trim a hard ending here. Single track only.
+ *   duck*      how the music sits back behind menus (upgrade / shop / game over).
+ */
+const MUSIC_CONFIG = {
+  crossfade: 6,
+  shuffle: true,
+  loopStart: 0,
+  loopEnd: null,
+  fadeIn: 3,
+  fadeOut: 0.7,
+  duckOnMenus: true,
+  duckVolume: 0.55,
+  duckFilterHz: 900,
+};
+
+/* ============================================================
+   ENEMY ARCHETYPES
+   ============================================================ */
+/**
+ * capFrac — armour. Caps a SINGLE incoming hit at this fraction of the unit's
+ * max HP, so no matter how large one hit is it can never remove more than that
+ * slice. 1/capFrac is therefore the floor on hits-to-kill. This is the one stat
+ * that stays meaningful against the card upgrades, which are multiplicative
+ * (Damage x1.4) and so make any flat resistance irrelevant within a few waves.
+ * The counterplay is attack frequency — fire rate, multishot, pierce, chain,
+ * orbs, ray — not a bigger damage number.
+ */
+/**
+ * form — which silhouette Enemy.draw builds. Detail is tiered by how many of
+ * the thing are ever on screen at once: a late wave puts 150+ grunts up, so
+ * chevron and dart stay at a single stroke each, exactly what the old squares
+ * cost. The lavish multi-layer forms are reserved for units you meet a handful
+ * of at a time.
+ *
+ * dir  — true if the silhouette points along its heading rather than tumbling.
+ *        A swarm all aimed at the core reads as intent instead of debris.
+ */
+const ENEMIES = {
+  grunt:    { hp: 11,  speed: 74,  size: 15, dmg: 6,  cash: 2,  color: C.red,    form: 'chevron',  dir: true },
+  swift:    { hp: 7,   speed: 148, size: 11, dmg: 4,  cash: 2,  color: C.gold,   form: 'dart',     dir: true },
+  tank:     { hp: 52,  speed: 46,  size: 24, dmg: 18, cash: 7,  color: C.purple, form: 'block' },
+  splitter: { hp: 20,  speed: 80,  size: 20, dmg: 8,  cash: 4,  color: C.teal,   form: 'triangle', splits: 3 },
+  shard:    { hp: 5,   speed: 128, size: 14, dmg: 3,  cash: 1,  color: C.teal,   form: 'kite' },
+  bulwark:  { hp: 34,  speed: 54,  size: 21, dmg: 16, cash: 11, color: C.steel,  form: 'fortress', capFrac: 0.09 },
+  boss:     { hp: 300, speed: 30,  size: 40, dmg: 30, cash: 60, color: C.pink,   form: 'monolith', boss: true },
+};
+
+/** Which archetypes are unlocked by a given wave. */
+function unlockedTypes(wave) {
+  const t = ['grunt'];
+  if (wave >= 2) t.push('swift');
+  if (wave >= 4) t.push('tank');
+  if (wave >= 6) t.push('splitter');
+  if (wave >= 10) t.push('bulwark');
+  return t;
+}
+
+/**
+ * Build the spawn schedule for a wave.
+ * Returns { entries:[{type,delay}], boss:bool }
+ */
+function buildWave(wave) {
+  const isBoss = wave % 5 === 0;
+  const types = unlockedTypes(wave);
+  const count = Math.round(5 + wave * 1.6 + Math.pow(wave, 1.22));
+  const duration = clamp(9 + wave * 0.5, 9, 26);
+  const entries = [];
+
+  for (let i = 0; i < count; i++) {
+    // weight toward newer, tougher types as waves progress
+    let type = types[0];
+    const r = Math.random();
+    if (types.length > 1) {
+      if (r < 0.55) type = 'grunt';
+      else if (r < 0.72 && types.includes('swift')) type = 'swift';
+      else if (r < 0.85 && types.includes('tank')) type = 'tank';
+      else if (r < 0.93 && types.includes('bulwark')) type = 'bulwark';
+      else if (types.includes('splitter')) type = 'splitter';
+      else type = pick(types);
+    }
+    entries.push({ type, delay: (i / count) * duration + rand(-0.25, 0.25) });
+  }
+
+  // baseline grunt padding on top of the mix, growing with wave
+  const extraGrunts = Math.round(3 + wave * 0.9);
+  for (let i = 0; i < extraGrunts; i++) {
+    entries.push({ type: 'grunt', delay: (i / extraGrunts) * duration + rand(-0.3, 0.3) });
+  }
+
+  if (isBoss) {
+    entries.push({ type: 'boss', delay: duration * 0.35 });
+    // boss rounds bring a dense swarm, packed tight behind the boss. Past the
+    // early waves a slice of it hardens into tanks so the swarm can't be cleared
+    // by pure crowd-clear (pierce / chain / orbs) alone.
+    const swarm = Math.round(18 + wave * 2.4);
+    const hardShare = types.includes('tank') ? Math.min(0.30, 0.05 + wave * 0.012) : 0;
+    const swarmStart = duration * 0.30;
+    const swarmSpan = duration * 0.55;
+    for (let i = 0; i < swarm; i++) {
+      const type = Math.random() < hardShare ? 'tank' : 'grunt';
+      entries.push({ type, delay: swarmStart + (i / swarm) * swarmSpan + rand(-0.15, 0.15) });
+    }
+  }
+
+  entries.sort((a, b) => a.delay - b.delay);
+  return { entries, boss: isBoss, duration };
+}
+
+/**
+ * Stat multipliers applied to every enemy for a given wave.
+ *
+ * Card upgrades are multiplicative (Damage x1.4, Fire Rate x1.45) and the player
+ * takes one per wave, so tower DPS compounds faster than a flat 1.185 HP curve.
+ * The late ramp below kicks in past LATE_WAVE to close that gap; before then the
+ * curve is unchanged, so the early game plays exactly as it always did.
+ */
+const LATE_WAVE = 8;
+
+function waveScale(wave) {
+  const late = Math.max(0, wave - LATE_WAVE);
+  return {
+    hp: Math.pow(1.185, wave - 1) * Math.pow(1.06, late),
+    speed: Math.min(1 + (wave - 1) * 0.022, 1.9),
+    dmg: Math.pow(1.10, wave - 1) * Math.pow(1.04, late),
+    cash: 1 + (wave - 1) * 0.16,
+  };
+}
+
+/* ============================================================
+   UPGRADES
+   Each: id, name, icon, color, max, weight, unlock(state),
+         desc(tower, nextLevel), apply(tower)
+   ============================================================ */
+const UPGRADES = [
+  {
+    id: 'damage', name: 'Damage', icon: '⚔️', color: C.red, max: 99, weight: 10,
+    desc: () => '+40% DAMAGE',
+    apply: t => {
+      t.damage *= 1.4; t.orbDmg *= 1.4; t.missileDmg *= 1.4;
+      t.chainDmg *= 1.4; t.meteorDmg *= 1.4; t.rayDps *= 1.4;
+      t.novaBase *= 1.4; t.novaDmg *= 1.4;
+    },
+  },
+  {
+    id: 'fireRate', name: 'Fire Rate', icon: '⚡', color: C.gold, max: 99, weight: 10,
+    unlock: s => s.t.fireRate < MAX_FIRE_RATE - 1e-6,
+    desc: (t, lv) => (lv <= 2 ? '+400% SPEED' : '+45% SPEED'),
+    apply: (t, lv) => { t.fireRate = Math.min(MAX_FIRE_RATE, t.fireRate * (lv <= 2 ? 5 : 1.45)); },
+  },
+  {
+    id: 'multishot', name: 'Multishot', icon: '🎯', color: C.cyan, max: 20, weight: 8,
+    desc: (t, lv) => (lv === 1 ? '+4 PROJECTILES' : '+2 PROJECTILES'),
+    apply: (t, lv) => { t.shots += (lv === 1 ? 4 : 2); },
+  },
+  {
+    id: 'range', name: 'Range', icon: '📡', color: C.cyan, max: 12, weight: 6,
+    desc: () => '+22% RANGE',
+    apply: t => { t.range *= 1.22; },
+  },
+  {
+    id: 'pierce', name: 'Piercing', icon: '🔩', color: C.orange, max: 10, weight: 5,
+    desc: () => 'SHOTS PUNCH THROUGH +2',
+    apply: t => { t.pierce += 2; },
+  },
+  {
+    id: 'crit', name: 'Critical', icon: '💥', color: C.orange, max: 12, weight: 6,
+    desc: () => '+10% CRIT, +0.6x MULT',
+    // still worth taking at the clamp — the multiplier keeps climbing
+    apply: t => { t.critChance = Math.min(MAX_CRIT_CHANCE, t.critChance + 0.10); t.critMult += 0.6; },
+  },
+  {
+    id: 'health', name: 'Fortify', icon: '🛡️', color: C.teal, max: 99, weight: 8,
+    desc: () => '+60 MAX HP, FULL HEAL',
+    apply: t => { t.maxHp += 60; t.hp = t.maxHp; },
+  },
+  {
+    id: 'regen', name: 'Nanorepair', icon: '♻️', color: C.teal, max: 12, weight: 6,
+    desc: () => '+2 HP PER SECOND',
+    apply: t => { t.regen += 2; },
+  },
+  {
+    id: 'lifesteal', name: 'Siphon', icon: '🩸', color: C.pink, max: 10, weight: 4,
+    desc: () => 'HEAL 1.5 HP PER KILL',
+    apply: t => { t.lifesteal += 1.5; },
+  },
+  {
+    id: 'orbs', name: 'Orbs', icon: '🔵', color: C.cyan, max: 12, weight: 7,
+    desc: (t, lv) => (lv === 1 ? '5 ORBITING KILLERS' : '+2 ORBITING KILLERS'),
+    apply: (t, lv) => { t.orbCount += (lv === 1 ? 5 : 2); },
+  },
+  {
+    id: 'missiles', name: 'Smart Missiles', icon: '🚀', color: C.orange, max: 12, weight: 7,
+    desc: (t, lv) => (lv === 1 ? '18 HOMING MISSILES' : '+6 HOMING MISSILES'),
+    apply: (t, lv) => { t.missileCount += (lv === 1 ? 18 : 6); },
+  },
+  {
+    id: 'chain', name: 'Chain Lightning', icon: '🌩️', color: C.purple, max: 12, weight: 7,
+    desc: (t, lv) => (lv === 1 ? 'ARCS THROUGH THE SWARM' : '+3 ARC JUMPS'),
+    apply: (t, lv) => { t.chainJumps += (lv === 1 ? 5 : 3); if (lv > 1) t.chainCd = Math.max(0.5, t.chainCd * 0.88); },
+  },
+  {
+    id: 'meteor', name: 'Meteor Strike', icon: '☄️', color: C.orange, max: 12, weight: 6,
+    desc: (t, lv) => (lv === 1 ? 'METEORS RAIN DOWN' : '+1 METEOR PER VOLLEY'),
+    apply: (t, lv) => { t.meteorCount += 1; if (lv > 1) t.meteorCd = Math.max(1.2, t.meteorCd * 0.9); },
+  },
+  {
+    id: 'ray', name: 'Death Ray', icon: '☀️', color: C.gold, max: 8, weight: 5,
+    unlock: s => s.wave >= 4,
+    desc: (t, lv) => (lv === 1 ? 'INSTANT-KILL BEAM' : '+1 SWEEPING BEAM'),
+    apply: t => { t.rayCount += 1; },
+  },
+  {
+    id: 'nova', name: 'Shockwave', icon: '💠', color: C.cyan, max: 12, weight: 6,
+    desc: (t, lv) => (lv === 1 ? 'PULSE BLASTS THEM BACK' : '+80% PULSE DAMAGE'),
+    // Adopt novaBase, never a literal — assigning 34 here would throw away
+    // every damage multiplier banked before Shockwave was offered.
+    apply: (t, lv) => {
+      if (lv === 1) t.novaDmg = t.novaBase;
+      else { t.novaDmg *= 1.8; t.novaBase *= 1.8; t.novaCd = Math.max(1.8, t.novaCd * 0.9); }
+    },
+  },
+  {
+    id: 'cryo', name: 'Cryo Field', icon: '❄️', color: C.cyan, max: 6, weight: 5,
+    desc: () => 'SLOW EVERYTHING NEARBY',
+    apply: t => { t.slowPct = Math.min(0.72, t.slowPct + 0.18); },
+  },
+  {
+    id: 'thorns', name: 'Reactive Plating', icon: '🜲', color: C.purple, max: 8, weight: 4,
+    unlock: s => s.wave >= 3,
+    desc: () => 'BURN ATTACKERS ON CONTACT',
+    apply: t => { t.thorns += 45; },
+  },
+  {
+    id: 'cash', name: 'Salvager', icon: '◈', color: C.teal, max: 8, weight: 4,
+    desc: () => '+35% SALVAGE',
+    apply: t => { t.cashMult += 0.35; },
+  },
+
+  /* ---- cards that exist to unstick a dead end, not to add another stat ---- */
+
+  {
+    // The trigger caps at MAX_FIRE_RATE; past that, Fire Rate and Coolant do
+    // nothing at all. Gated on reaching the cap so it can never be a trap pick:
+    // it only appears for the build that has already hit the wall.
+    id: 'overdrive', name: 'Overdrive', icon: '🔥', color: C.gold, max: 8, weight: 7,
+    unlock: s => s.t.fireRate >= MAX_FIRE_RATE - 1e-6,
+    desc: () => '+35% DAMAGE',
+    apply: t => {
+      t.damage *= 1.35; t.orbDmg *= 1.35; t.missileDmg *= 1.35;
+      t.chainDmg *= 1.35; t.meteorDmg *= 1.35; t.rayDps *= 1.35;
+      t.novaBase *= 1.35; t.novaDmg *= 1.35;
+    },
+  },
+  {
+    // Bulwarks clamp every hit to a slice of their max HP, so a damage build
+    // has no answer to them but attack frequency. This is that answer.
+    id: 'breach', name: 'Breaching Rounds', icon: '🗡️', color: C.steel, max: 5, weight: 5,
+    unlock: s => s.wave >= 9,
+    desc: () => '+60% ARMOUR PENETRATION',
+    apply: t => { t.capPierce += 0.6; },
+  },
+  {
+    // Late waves are ~two thirds grunts packed tight; blast damage scales with
+    // that density and chains through a formation.
+    id: 'detonate', name: 'Detonation', icon: '💣', color: C.orange, max: 8, weight: 6,
+    desc: (t, lv) => (lv === 1 ? 'KILLS DETONATE' : '+25% BLAST'),
+    apply: (t, lv) => { t.detonate += (lv === 1 ? 0.3 : 0.25); },
+  },
+  {
+    // Multiplies the number of hits rather than their size, which is exactly
+    // what gets through a per-hit damage cap.
+    id: 'ricochet', name: 'Ricochet', icon: '🔀', color: C.cyan, max: 6, weight: 6,
+    desc: (t, lv) => (lv === 1 ? 'SHOTS BOUNCE TO A NEW TARGET' : '+1 BOUNCE'),
+    apply: t => { t.bounces += 1; },
+  },
+  {
+    // Every other card is a pure gain, so a pick is only ever a ranking. This
+    // one costs something, which makes it the first real decision on the board.
+    id: 'overload', name: 'Overload', icon: '⚠️', color: C.red, max: 6, weight: 4,
+    unlock: s => s.wave >= 5,
+    desc: () => '+80% DAMAGE, -25% MAX HP',
+    apply: t => {
+      t.damage *= 1.8; t.orbDmg *= 1.8; t.missileDmg *= 1.8;
+      t.chainDmg *= 1.8; t.meteorDmg *= 1.8; t.rayDps *= 1.8;
+      t.novaBase *= 1.8; t.novaDmg *= 1.8;
+      t.maxHp = Math.max(40, Math.round(t.maxHp * 0.75));
+      t.hp = Math.min(t.hp, t.maxHp);   // never leave hp above the new ceiling
+    },
+  },
+];
+
+const UPGRADE_BY_ID = Object.fromEntries(UPGRADES.map(u => [u.id, u]));
+
+/* ============================================================
+   SHOP
+   Bought with salvage between waves. Unlike the card upgrades these are
+   small, repeatable and always available — salvage is the resource that
+   lets a good run compound instead of being purely luck of the draw.
+
+   Each: id, name, icon, color, max, desc(level), cost(level, game),
+         enabled(tower, game), capped(tower, game), apply(tower, game)
+
+   enabled — false when the item is useless RIGHT NOW but may matter again
+             (Field Repair at full health). Dims the row.
+   capped  — true when the item can never do anything again, because the stat
+             it feeds has hit a ceiling. Reads as MAX, exactly like running out
+             of levels, because to the player it is the same thing.
+   ============================================================ */
+const SHOP = [
+  {
+    id: 'repair', name: 'Field Repair', icon: '🔧', color: C.teal, max: Infinity,
+    desc: () => 'RESTORE 40% HP',
+    cost: (lv, g) => Math.round(30 + 10 * g.wave),
+    enabled: t => t.hp < t.maxHp - 0.5,
+    apply: t => { t.hp = Math.min(t.maxHp, t.hp + t.maxHp * 0.4); },
+  },
+  {
+    id: 'plating', name: 'Hull Plating', icon: '🛡️', color: C.teal, max: 99,
+    desc: () => '+25 MAX HP',
+    cost: lv => Math.round(45 * Math.pow(1.5, lv)),
+    apply: t => { t.maxHp += 25; t.hp += 25; },
+  },
+  {
+    id: 'core', name: 'Damage Core', icon: '⚔️', color: C.red, max: 99,
+    desc: () => '+12% DAMAGE',
+    cost: lv => Math.round(55 * Math.pow(1.55, lv)),
+    apply: t => {
+      t.damage *= 1.12; t.orbDmg *= 1.12; t.missileDmg *= 1.12;
+      t.chainDmg *= 1.12; t.meteorDmg *= 1.12; t.rayDps *= 1.12;
+      t.novaBase *= 1.12; t.novaDmg *= 1.12;
+    },
+  },
+  {
+    id: 'coolant', name: 'Coolant', icon: '⏱️', color: C.gold, max: 99,
+    desc: () => '+10% FIRE RATE',
+    cost: lv => Math.round(55 * Math.pow(1.55, lv)),
+    // the gun cannot cycle faster than MAX_FIRE_RATE, so stop selling past it
+    capped: t => t.fireRate >= MAX_FIRE_RATE - 1e-6,
+    apply: t => { t.fireRate = Math.min(MAX_FIRE_RATE, t.fireRate * 1.10); },
+  },
+  {
+    id: 'lens', name: 'Focusing Lens', icon: '📡', color: C.cyan, max: 20,
+    desc: () => '+8% RANGE',
+    cost: lv => Math.round(50 * Math.pow(1.45, lv)),
+    // nothing can ever be further away than the spawn ring's far corner
+    capped: (t, g) => t.range >= g.maxThreatDistance(),
+    apply: t => { t.range *= 1.08; },
+  },
+  {
+    id: 'optics', name: 'Targeting Optics', icon: '💥', color: C.orange, max: 20,
+    desc: () => '+4% CRIT CHANCE',
+    cost: lv => Math.round(60 * Math.pow(1.5, lv)),
+    // Critical cards share this clamp and can reach it first
+    capped: t => t.critChance >= MAX_CRIT_CHANCE - 1e-6,
+    apply: t => { t.critChance = Math.min(MAX_CRIT_CHANCE, t.critChance + 0.04); },
+  },
+  {
+    id: 'token', name: 'Reroll Token', icon: '🎲', color: C.purple, max: Infinity,
+    desc: () => '+1 CARD REROLL',
+    cost: (lv, g) => Math.round(70 * Math.pow(1.3, g.rerolls)),
+    enabled: (t, g) => g.rerolls < 6,
+    apply: (t, g) => { g.rerolls++; },
+  },
+];
