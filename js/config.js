@@ -61,9 +61,9 @@ function baseTower() {
 
     // homing missiles
     missileCount: 0,
-    missileCd: 3.2,
-    missileDmg: 22,
-    missileRadius: 62,
+    missileCd: 3.6,
+    missileDmg: 15,
+    missileRadius: 52,
 
     // chain lightning
     chainJumps: 0,
@@ -316,8 +316,18 @@ const UPGRADES = [
   },
   {
     id: 'missiles', name: 'Smart Missiles', icon: '🚀', color: C.orange, max: 12, weight: 7,
-    desc: (t, lv) => (lv === 1 ? '18 HOMING MISSILES' : '+6 HOMING MISSILES'),
-    apply: (t, lv) => { t.missileCount += (lv === 1 ? 18 : 6); },
+    unlock: s => s.wave >= 3,
+    desc: (t, lv) => (lv === 1 ? '8 HOMING MISSILES' : '+4 MISSILES, FASTER VOLLEY'),
+    /**
+     * Later levels buy cadence as well as payload. Stacking count alone made
+     * the opening pick a wave-clear on its own; splitting the growth between
+     * volley size and cooldown keeps the same late-game throughput while the
+     * first level lands closer to Orbs and Chain.
+     */
+    apply: (t, lv) => {
+      t.missileCount += (lv === 1 ? 8 : 4);
+      if (lv > 1) t.missileCd = Math.max(2, t.missileCd * 0.94);
+    },
   },
   {
     id: 'chain', name: 'Chain Lightning', icon: '🌩️', color: C.purple, max: 12, weight: 7,
