@@ -49,7 +49,56 @@ const Music = {
     if (m !== null) this.muted = m === '1';
 
     if (!MUSIC_TRACKS.length) { this.available = false; return; }
+    this.armUnlock();
     this.loadTrack(0);
+  },
+
+  /* ============================================================
+     Gesture unlock
+
+     A mobile browser only lets an AudioContext leave 'suspended' from inside a
+     real user gesture, and a resume() issued from a promise callback after the
+     gesture ends is rejected without a sound. Decoding the first track takes
+     long enough on a phone that the tap on START usually lands while mode is
+     still null, so the one gesture the game was relying on got spent doing
+     nothing. Arm every early input instead: the first one resumes the context
+     and plays a silent one-sample buffer, which is what actually takes iOS out
+     of its muted state, and the listeners drop off once that has worked.
+     ============================================================ */
+
+  UNLOCK_EVENTS: ['pointerdown', 'touchend', 'mousedown', 'keydown'],
+
+  armUnlock() {
+    if (this._unlockHandler) return;
+    this._unlockHandler = () => this.unlock();
+    for (const ev of this.UNLOCK_EVENTS) {
+      window.addEventListener(ev, this._unlockHandler, { capture: true, passive: true });
+    }
+  },
+
+  disarmUnlock() {
+    if (!this._unlockHandler) return;
+    for (const ev of this.UNLOCK_EVENTS) {
+      window.removeEventListener(ev, this._unlockHandler, { capture: true });
+    }
+    this._unlockHandler = null;
+  },
+
+  /** Safe to call repeatedly; must run synchronously inside the gesture. */
+  unlock() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || location.protocol === 'file:') { this.disarmUnlock(); return; }
+    if (!this.ctx) {
+      try { this.ctx = new AC(); } catch (_) { this.disarmUnlock(); return; }
+    }
+    this.ctx.resume().catch(() => {});
+    try {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+      src.connect(this.ctx.destination);
+      src.start(0);
+    } catch (_) { /* a blocked context throws here; the next tap tries again */ }
+    if (this.ctx.state === 'running') this.disarmUnlock();
   },
 
   async loadTrack(i) {
@@ -314,18 +363,23 @@ const Music = {
   play() {
     if (this.muted || this.available === false) return;
 
+    // Still decoding. The gesture is happening now, so spend it on the context
+    // now — loadTrack calls play() again when the buffer lands, and by then
+    // resuming is no longer permitted on mobile.
+    if (!this.mode) { this.unlock(); return; }
+
     if (this.mode === 'webaudio') {
       this.ctx.resume().then(() => {
         this.volGain.gain.cancelScheduledValues(this.ctx.currentTime);
         this.volGain.gain.setValueAtTime(this.gainValue(), this.ctx.currentTime);
         if (!this.sources.length) this.startLoop();
-      }).catch(() => {});
+      }).catch(err => console.warn('[music] context resume blocked:', err && err.message));
       return;
     }
 
     if (this.el) {
       const p = this.el.play();
-      if (p && p.catch) p.catch(() => {});
+      if (p && p.catch) p.catch(err => console.warn('[music] playback blocked:', err && err.message));
     }
   },
 

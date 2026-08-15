@@ -929,5 +929,14 @@ class Game {
   });
   window.addEventListener('keyup', ev => { if (ev.code === 'Space') ff = false; });
 
-  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+  /**
+   * pause() only fires while state is 'playing', so a lock screen during an
+   * upgrade or shop screen leaves the music unsuspended — and iOS parks the
+   * AudioContext in 'interrupted' regardless. Nothing else would ever bring it
+   * back in that case, since the pause screen's tap is what normally does it.
+   */
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pause();
+    else if (game.state !== 'paused') Music.resume();
+  });
 })();
