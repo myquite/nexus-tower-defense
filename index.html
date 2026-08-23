@@ -105,11 +105,15 @@
       <div class="sys-line danger">CORE BREACH // RUN TERMINATED</div>
       <h1 class="title dead">CORE BREACHED</h1>
       <div class="score-grid">
-        <div class="pod brk"><i>◆</i><span id="ovWave">0</span><small>WAVES</small></div>
+        <div class="pod brk"><i>◆</i><span id="ovWave">0</span><small>WAVE</small></div>
         <div class="pod brk"><i>✷</i><span id="ovKills">0</span><small>KILLS</small></div>
         <div class="pod brk"><i>◈</i><span id="ovCash">0</span><small>SALVAGE</small></div>
+        <div class="pod brk"><i>◷</i><span id="ovTime">0:00</span><small>TIME</small></div>
       </div>
       <div id="ovBest" class="best">BEST WAVE: 0</div>
+      <!-- the debrief itself; UI.showGameOver fills it, and it scrolls inside
+           its own frame so REDEPLOY never leaves the screen on a handset -->
+      <div id="ovReport" class="rpt brk"></div>
       <button id="retryBtn" class="big-btn brk">REDEPLOY</button>
     </div>
   </div>
@@ -127,6 +131,7 @@
 
 <script src="js/utils.js"></script>
 <script src="js/config.js"></script>
+<script src="js/stats.js"></script>
 <script src="js/entities.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/ui.js"></script>

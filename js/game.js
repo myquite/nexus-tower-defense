@@ -44,6 +44,9 @@ class Game {
   }
 
   reset() {
+    // Every redeploy comes through here, so the debrief can never show a
+    // number that belongs to the previous run.
+    Stats.reset(this);
     this.t = baseTower();
     this.perkLevels = {};
     this.shopLevels = {};
@@ -188,6 +191,7 @@ class Game {
     if (this.cash < cost) return;
 
     this.cash -= cost;
+    Stats.spent += cost;
     this.shopLevels[item.id] = lv + 1;
     item.apply(this.t, this);
     this.syncOrbs();
@@ -257,8 +261,9 @@ class Game {
     this.texts.push(this.textPool.get().init(x, y, fmt(amount), color, crit));
   }
 
-  damageTower(dmg) {
+  damageTower(dmg, from) {
     if (this.state !== 'playing') return;
+    if (from) Stats.leak(from, dmg);
     this.t.hp -= dmg;
     this.hitFlash = 1;
     if (this.t.hp <= 0) { this.t.hp = 0; this.gameOver(); }
@@ -286,12 +291,17 @@ class Game {
     return best;
   }
 
-  areaDamage(x, y, radius, dmg, color, knock) {
+  /**
+   * The shared blast funnel. Missiles, meteors, the nova and Detonation all
+   * land here, and by the time a hit reaches Enemy.hurt they are
+   * indistinguishable — so the caller has to say which one it is.
+   */
+  areaDamage(x, y, radius, dmg, color, knock, src) {
     const r2 = radius * radius;
     for (const e of this.enemies) {
       if (e.dead) continue;
       if (dist2(x, y, e.x, e.y) < r2) {
-        e.hurt(dmg, this, false);
+        e.hurt(dmg, this, false, src);
         if (knock) e.knockback(x, y, knock);
       }
     }
@@ -301,6 +311,9 @@ class Game {
     if (e.dead) return;
     e.dead = true;
     this.kills++;
+    // Credited before the detonation below, which can kill again and would
+    // otherwise overwrite the source that earned this one.
+    Stats.credit(e);
 
     /**
      * Detonation releases a slice of the victim's own max HP, so the blast
@@ -310,12 +323,20 @@ class Game {
      */
     if (this.t.detonate > 0 && this._detDepth < 3) {
       this._detDepth++;
-      this.areaDamage(e.x, e.y, 74, e.maxHp * this.t.detonate, C.orange);
+      this.areaDamage(e.x, e.y, 74, e.maxHp * this.t.detonate, C.orange, 0, SRC.DETONATE);
       this.rings.push(new Ring(e.x, e.y, 74, C.orange, 0.28));
       this._detDepth--;
     }
-    this.cash += e.cash * this.t.cashMult;
-    if (this.t.lifesteal) this.t.hp = Math.min(this.t.maxHp, this.t.hp + this.t.lifesteal);
+    const paid = e.cash * this.t.cashMult;
+    this.cash += paid;
+    Stats.earned += paid;
+    if (this.t.lifesteal) {
+      // banked as what was actually restored, not what was offered — a siphon
+      // at full health heals nothing
+      const before = this.t.hp;
+      this.t.hp = Math.min(this.t.maxHp, this.t.hp + this.t.lifesteal);
+      Stats.healed += this.t.hp - before;
+    }
     this.burst(e.x, e.y, e.color, e.boss ? 40 : (e.sizeMul < 1 ? 5 : 10), e.boss ? 2.6 : 1);
     if (e.boss) { this.shake(18); this.rings.push(new Ring(e.x, e.y, 150, C.pink, 0.6)); }
 
@@ -335,6 +356,7 @@ class Game {
         const r = e.size * 0.42;
         const s = new Enemy('shard',
           e.x + Math.cos(world) * r, e.y + Math.sin(world) * r, this.scale, 0.85);
+        Stats.spawn('shard');   // shards are hostiles the run really had to kill
         s.angle = e.angle + (i / n) * TAU;   // keep the wedge's own orientation
         s.spin = e.spin;                      // one shape coming apart, not three arrivals
         s.knockback(e.x, e.y, 150);
@@ -389,6 +411,9 @@ class Game {
     for (let i = 0; i < n; i++) {
       const off = n === 1 ? 0 : lerp(-spread, spread, i / (n - 1));
       const crit = chance(t.critChance);
+      // the roll is per projectile, so crit rate is measured per round too
+      Stats.rounds++;
+      if (crit) Stats.critShots++;
       const dmg = t.damage * (crit ? t.critMult : 1);
       const a = this.turretAngle + off + rand(-0.012, 0.012);
       const muzzle = this.towerRadius + 8;
@@ -444,6 +469,10 @@ class Game {
    */
   drainShield(amount, x, y) {
     const t = this.t;
+    // Bank only what the wall could actually absorb: past the last point of
+    // capacity the overflow is not stopped by anything, and counting it would
+    // credit the barrier with damage that went on to hit the core.
+    Stats.shielded += Math.min(amount, Math.max(0, t.shieldHp));
     t.shieldHp -= amount;
     this.shieldFlash = 1;
     this.shieldHitAngle = Math.atan2(y - this.cy, x - this.cx);
@@ -458,6 +487,7 @@ class Game {
    */
   collapseShield() {
     const t = this.t;
+    Stats.collapses++;
     t.shieldHp = 0;
     const ring = this.shieldRing();
     for (let i = 0; i < 40; i++) {
@@ -503,7 +533,7 @@ class Game {
     for (let j = 0; j < t.chainJumps && cur; j++) {
       hit.add(cur);
       pts.push({ x: cur.x, y: cur.y });
-      cur.hurt(t.chainDmg, this, false);
+      cur.hurt(t.chainDmg, this, false, SRC.CHAIN);
       cur.slowT = 0.5;
       // next nearest unhit within jump range
       let best = null, bd = 200 * 200;
@@ -538,7 +568,7 @@ class Game {
     if (this.novaCd > 0) return;
     this.novaCd = t.novaCd;
     const r = t.range * 0.9;
-    this.areaDamage(this.cx, this.cy, r, t.novaDmg, C.cyan, t.novaKnock);
+    this.areaDamage(this.cx, this.cy, r, t.novaDmg, C.cyan, t.novaKnock, SRC.NOVA);
     this.rings.push(new Ring(this.cx, this.cy, r, C.cyan, 0.55));
     this.shake(6);
   }
@@ -556,7 +586,7 @@ class Game {
         if (e.dead) continue;
         const r = width + e.size * 0.5;
         if (distToSegment2(e.x, e.y, this.cx, this.cy, ex, ey) < r * r) {
-          e.hurt(t.rayDps * dt, this, false);
+          e.hurt(t.rayDps * dt, this, false, SRC.RAY);
           if (Math.random() < 0.25) this.spark(e.x, e.y, C.gold, 0.25);
         }
       }
@@ -577,7 +607,7 @@ class Game {
         const oy = this.cy + Math.sin(a) * t.orbRadius;
         const r = 11 + e.size * 0.5;
         if (dist2(ox, oy, e.x, e.y) < r * r) {
-          e.hurt(t.orbDmg, this, false);
+          e.hurt(t.orbDmg, this, false, SRC.ORB);
           e.knockback(this.cx, this.cy, 40);
           e.orbCd = 0.28;
           this.burst(ox, oy, C.cyan, 4, 0.5);
@@ -628,14 +658,23 @@ class Game {
 
     const t = this.t;
     this.waveTime += dt;
+    // Only ticks here, past the state gate — the debrief's clock is time under
+    // fire, not time with the tab open on the shop screen.
+    Stats.time += dt;
+    if (this.enemies.length > Stats.peak) Stats.peak = this.enemies.length;
 
     // regen
-    if (t.regen) t.hp = Math.min(t.maxHp, t.hp + t.regen * dt);
+    if (t.regen) {
+      const before = t.hp;
+      t.hp = Math.min(t.maxHp, t.hp + t.regen * dt);
+      Stats.healed += t.hp - before;
+    }
 
     // spawns
     while (this.spawnQueue.length && this.spawnQueue[0].at <= this.waveTime) {
       const s = this.spawnQueue.shift();
       const p = this.spawnPoint();
+      Stats.spawn(s.type);
       this.enemies.push(new Enemy(s.type, p.x, p.y, this.scale, 1));
     }
 

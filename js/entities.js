@@ -62,7 +62,7 @@ class Enemy {
     this.scaleRef = scale;
   }
 
-  hurt(amount, g, crit) {
+  hurt(amount, g, crit, src) {
     // Armour clamps the hit rather than scaling it down, so overkill damage is
     // simply discarded. Always surface a capped hit — a silently shrunk number
     // reads as a bug, a steel one reads as armour.
@@ -70,7 +70,10 @@ class Enemy {
     // still matters — it just stops being an absolute wall for a damage build.
     const cap = this.dmgCap * (1 + (g.t.capPierce || 0));
     let capped = false;
-    if (amount > cap) { amount = cap; capped = true; }
+    if (amount > cap) { Stats.absorbed += amount - cap; amount = cap; capped = true; }
+    // Every weapon funnels through here, so this is the one place attribution
+    // can be recorded — hence the src every caller now carries.
+    Stats.hit(src, amount, this.hp);
     this.hp -= amount;
     this.flash = 1;
     g.spawnDamageText(this.x, this.y - this.size, amount, crit && !capped, capped);
@@ -86,7 +89,7 @@ class Enemy {
      * but Detonation's own _detDepth guard already bounds that chain.
      */
     if (crit && g.t.critBlast > 0 && !this.dead) {
-      g.areaDamage(this.x, this.y, 66, amount * g.t.critBlast, C.orange);
+      g.areaDamage(this.x, this.y, 66, amount * g.t.critBlast, C.orange, 0, SRC.FISSION);
     }
     if (this.hp <= 0 && !this.dead) g.killEnemy(this);
   }
@@ -137,7 +140,7 @@ class Enemy {
           // killEnemy may split this into shards that would otherwise be
           // handed a knockback belonging to a corpse.
           if (g.t.shieldDmg > 0) {
-            this.hurt(g.t.shieldDmg, g, false);
+            this.hurt(g.t.shieldDmg, g, false, SRC.BARRIER);
             if (this.dead || this.hp <= 0) return;
           }
           this.knockback(g.cx, g.cy, SHIELD_KNOCK);
@@ -158,10 +161,13 @@ class Enemy {
        * lands, which is what "burn attackers on contact" should buy you.
        */
       if (g.t.thorns > 0) {
+        // Reports itself, because it is the one damage source that never
+        // reaches hurt() — see above for why it cannot be made to.
+        Stats.hit(SRC.THORNS, g.t.thorns, this.hp);
         this.hp -= g.t.thorns;
         if (this.hp <= 0) { g.killEnemy(this); return; }   // stopped short of the core
       }
-      g.damageTower(this.dmg);
+      g.damageTower(this.dmg, this);
       g.burst(this.x, this.y, this.color, this.boss ? 26 : 12, 1.4);
       g.shake(this.boss ? 16 : 7);
       this.dead = true;   // detonates on the core — no kill credit
@@ -366,6 +372,7 @@ class Bullet {
     this.bounces = bounces || 0;
     this.life = 2.2;
     this.hit = new Set();
+    this.scored = false;   // has this round touched anything yet — accuracy, not hit count
     this.dead = false;
     this.px = x; this.py = y;
   }
@@ -382,7 +389,10 @@ class Bullet {
       const r = e.size * 0.62 + 4;
       if (dist2(this.x, this.y, e.x, e.y) < r * r) {
         this.hit.add(e);
-        e.hurt(this.dmg, g, this.crit);
+        // Pierce and ricochet mean one round can land many hits, so accuracy
+        // counts rounds that connected at all, not impacts.
+        if (!this.scored) { this.scored = true; Stats.connected++; }
+        e.hurt(this.dmg, g, this.crit, SRC.GUN);
         g.burst(this.x, this.y, this.crit ? C.gold : C.cyan, this.crit ? 7 : 3, 0.6);
 
         // Ricochet is checked before the pierce budget, so a bounce keeps the
@@ -463,7 +473,7 @@ class Missile {
   explode(g) {
     if (this.dead) return;
     this.dead = true;
-    g.areaDamage(this.x, this.y, this.radius, this.dmg, C.orange);
+    g.areaDamage(this.x, this.y, this.radius, this.dmg, C.orange, 0, SRC.MISSILE);
     g.burst(this.x, this.y, C.orange, 16, 1.6);
     g.rings.push(new Ring(this.x, this.y, this.radius, C.orange, 0.32));
   }
@@ -517,7 +527,7 @@ class Meteor {
     if (Math.random() < 0.7) g.spark(this.x, this.y, C.orange, 0.4);
     if (k >= 1) {
       this.dead = true;
-      g.areaDamage(this.tx, this.ty, this.radius, this.dmg, C.orange, 140);
+      g.areaDamage(this.tx, this.ty, this.radius, this.dmg, C.orange, 140, SRC.METEOR);
       g.burst(this.tx, this.ty, C.orange, 34, 2.4);
       g.rings.push(new Ring(this.tx, this.ty, this.radius, C.gold, 0.45));
       g.shake(9);
