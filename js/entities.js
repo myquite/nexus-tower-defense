@@ -68,12 +68,25 @@ class Enemy {
     // reads as a bug, a steel one reads as armour.
     // Breaching Rounds lifts the ceiling rather than removing it, so armour
     // still matters — it just stops being an absolute wall for a damage build.
+    /**
+     * Brittle. Applied BEFORE the armour clamp deliberately, which means a
+     * bulwark still bounds the result: against armour this buys damage only up
+     * to the cap and cannot punch past it. Applying it after would let it
+     * bypass armour entirely and quietly make Breaching Rounds pointless —
+     * armour is supposed to be answered by penetration, not by a debuff.
+     *
+     * Keyed off slowT as well as the field, so a hit lands as brittle whenever
+     * the target is actually slowed, whatever slowed it.
+     */
+    if (g.t.brittle > 0 && this.isSlowed(g)) amount *= 1 + g.t.brittle;
+
     const cap = this.dmgCap * (1 + (g.t.capPierce || 0));
     let capped = false;
     if (amount > cap) { Stats.absorbed += amount - cap; amount = cap; capped = true; }
     // Every weapon funnels through here, so this is the one place attribution
     // can be recorded — hence the src every caller now carries.
     Stats.hit(src, amount, this.hp);
+    const hpBefore = this.hp;
     this.hp -= amount;
     this.flash = 1;
     g.spawnDamageText(this.x, this.y - this.size, amount, crit && !capped, capped);
@@ -89,9 +102,22 @@ class Enemy {
      * but Detonation's own _detDepth guard already bounds that chain.
      */
     if (crit && g.t.critBlast > 0 && !this.dead) {
-      g.areaDamage(this.x, this.y, 66, amount * g.t.critBlast, C.orange, 0, SRC.FISSION);
+      g.areaDamage(this.x, this.y, BLAST_FISSION * g.t.blastMult,
+        amount * g.t.critBlast, C.orange, 0, SRC.FISSION);
     }
-    if (this.hp <= 0 && !this.dead) g.killEnemy(this);
+    if (this.hp <= 0 && !this.dead) {
+      // Measured before killEnemy: splits and detonations mutate the field,
+      // and the excess belongs to the blow that was actually struck here.
+      const spare = g.t.carry > 0 ? (amount - hpBefore) * g.t.carry : 0;
+      g.killEnemy(this);
+      if (spare > 0) g.carryOver(this, spare, src);
+    }
+  }
+
+  /** Inside the cryo field, or slowed by anything else that sets slowT. */
+  isSlowed(g) {
+    if (this.slowT > 0) return true;
+    return g.t.slowPct > 0 && dist2(this.x, this.y, g.cx, g.cy) < g.t.range * g.t.range;
   }
 
   knockback(fromX, fromY, force) {

@@ -303,14 +303,20 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
   color:var(--teal);text-shadow:0 0 10px rgba(63,240,200,.45);
 }
 
-/* ---- the bay ---- */
+/* ---- the bay ----
+   Drawn as tech LINES, not as a list. Each line is a track that reads down and
+   to the right: root at the margin, each successor indented one step under the
+   thing it succeeds, with an elbow connecting them. The whole point is that a
+   MAX row is visibly followed by something, so the indent and the elbow are
+   load-bearing furniture, not decoration. */
 .shop-list{
   --arm:16px; --brk:rgba(90,216,255,.55);
+  --step:14px;              /* one rung of lineage indent */
   position:relative;
   margin-top:18px;
   display:flex;flex-direction:column;gap:0;
   max-height:min(44vh,380px);overflow-y:auto;
-  padding:10px 12px;
+  padding:8px 10px 10px;
   background-color:rgba(6,16,32,.6);
   /* keep the frame pinned while the manifest scrolls inside it */
   background-attachment:local,local,local,local,local,local,local,local,scroll;
@@ -320,28 +326,67 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 .shop-list::-webkit-scrollbar-thumb{background:rgba(90,216,255,.28);border-radius:0}
 .shop-list::-webkit-scrollbar-track{background:transparent}
 
+/* ---- line header: the quietest thing on the screen ----
+   It only has to say which track you are looking at, so it is a rule with a
+   word set into it — dimmer than any label, which are already dimmer than any
+   value. */
+.bay-line{
+  display:flex;align-items:center;gap:8px;
+  margin:13px 0 4px;
+  animation:rowDeploy .3s backwards cubic-bezier(.22,1.15,.36,1);
+}
+.bay-line:first-child{margin-top:2px}
+.bl-name{
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
+  letter-spacing:.34em;color:rgba(150,205,240,.5);
+}
+.bl-rule{flex:1;height:1px;background:rgba(90,216,255,.16)}
+
 /* ---- rows: edge tick + hairline, no frame of their own ---- */
 .shop-row{
-  display:flex;align-items:center;gap:11px;
-  padding:9px 4px 9px 12px;
+  position:relative;
+  display:flex;align-items:center;gap:9px;
+  padding:8px 2px 8px calc(11px + var(--d,0) * var(--step));
   border:none;border-radius:0;
-  border-bottom:1px solid rgba(90,216,255,.09);
   background-color:transparent;
   background-image:linear-gradient(var(--c),var(--c));
   background-repeat:no-repeat;
   background-size:2px 56%;
-  background-position:left center;
+  /* the accent tick sits at the row's own indent, so the tick column itself
+     traces the shape of the line */
+  background-position:calc(var(--d,0) * var(--step)) center;
   text-align:left;
   transition:background-color .13s;
   animation:rowDeploy .3s backwards cubic-bezier(.22,1.15,.36,1);
 }
-.shop-row:last-child{border-bottom:none}
+/* borders BETWEEN siblings only — a trailing hairline stacked under a line
+   header would read as a double rule */
+.shop-row + .shop-row,
+.shop-row + .shop-x,
+.shop-x + .shop-row{border-top:1px solid rgba(90,216,255,.09)}
 .shop-row:hover{background-color:rgba(90,216,255,.045)}
 
+/* ---- the lineage elbow ----
+   Hairline corner from the parent's tick down into this row's icon, plus a
+   head so it reads as "leads to" rather than "grouped with". */
+.s-elb{
+  position:absolute;left:calc((var(--d) - 1) * var(--step) + 1px);
+  top:-1px;width:calc(var(--step) - 3px);height:calc(50% + 1px);
+  border-left:1px solid var(--c);
+  border-bottom:1px solid var(--c);
+  opacity:.42;pointer-events:none;
+}
+.s-elb::after{
+  content:'';position:absolute;right:-2px;bottom:-3.5px;
+  border-left:4px solid var(--c);
+  border-top:3.5px solid transparent;border-bottom:3.5px solid transparent;
+}
+
 /* ---- a newly unlocked item, on the one visit that introduces it ----
-   Sorted to the top already; this is what makes it read as an arrival rather
-   than as the list having quietly grown by one. The tick down the left edge
-   is the row's existing motif, just turned up. */
+   Lines put arrivals wherever their track is rather than at the top, so this
+   now carries the whole job of catching the eye (the list scrolls it into view
+   to meet it halfway). The tick down the left edge is the row's existing
+   motif, just turned up. */
 .shop-row.is-new{
   background-color:rgba(90,216,255,.05);
   background-size:2px 100%;
@@ -356,6 +401,45 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 @keyframes newPulse{
   0%,100%{opacity:1}
   50%{opacity:.55}
+}
+
+/* ---- the locked next step ----
+   A silhouette: it states its condition and nothing else. No name, no cost, no
+   button — unlocking it still has to be a reveal, and the row exists to say
+   "the line does not end here", not to spoil what is at the end of it. */
+.shop-row.is-locked{
+  background-image:none;      /* no accent tick: it isn't stock yet */
+  cursor:default;
+}
+.shop-row.is-locked:hover{background-color:transparent}
+.shop-row.is-locked .s-elb{opacity:.2}
+.shop-row.is-locked .s-ico{
+  font-size:13px;filter:none;opacity:.45;
+}
+.shop-row.is-locked .s-name{
+  color:rgba(190,225,255,.4);font-size:9px;letter-spacing:.2em;
+}
+.shop-row .s-req{
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
+  letter-spacing:.14em;color:rgba(150,205,240,.34);
+}
+
+/* ---- where a capped line continues ----
+   A pointer, not a node: the item is bought in its own track and a second buy
+   chip for it here would be two rows for one purchase. */
+.shop-x{
+  position:relative;
+  display:flex;align-items:center;gap:7px;
+  padding:6px 2px 6px calc(11px + var(--d,0) * var(--step));
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
+  letter-spacing:.16em;color:rgba(150,205,240,.42);
+  animation:rowDeploy .3s backwards cubic-bezier(.22,1.15,.36,1);
+}
+.shop-x i{font-style:normal;font-size:11px;opacity:.7;filter:drop-shadow(0 0 7px var(--c))}
+.shop-x b{
+  font-weight:700;color:var(--c);opacity:.85;
+  margin-left:7px;padding:1px 5px;
+  border:1px solid var(--c);
 }
 
 /* ---- more below the fold ----
@@ -374,14 +458,14 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 }
 
 .shop-row .s-ico{
-  font-size:20px;line-height:1;width:24px;text-align:center;
+  font-size:18px;line-height:1;width:22px;text-align:center;flex-shrink:0;
   filter:drop-shadow(0 0 9px var(--c));
 }
 .shop-row .s-txt{flex:1;min-width:0}
 .shop-row .s-name{
   font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;
   letter-spacing:.16em;text-transform:uppercase;color:#eaf8ff;
-  display:flex;align-items:center;gap:7px;
+  display:flex;align-items:center;flex-wrap:wrap;gap:4px 7px;
 }
 .shop-row .s-lvl{
   font-size:8px;font-weight:700;letter-spacing:.16em;
@@ -396,8 +480,8 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 /* ---- buy chip ---- */
 .buy{
   --arm:8px; --brk:var(--c);
-  flex-shrink:0;cursor:pointer;min-width:78px;
-  padding:8px 10px;
+  flex-shrink:0;cursor:pointer;min-width:74px;
+  padding:7px 9px;
   background-color:rgba(6,16,32,.7);
   color:#eaf8ff;
   font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;
@@ -407,6 +491,20 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 .buy:active:not(:disabled){transform:scale(.96)}
 .buy:disabled{--brk:rgba(150,180,210,.35);color:rgba(200,225,245,.45);cursor:default}
 .buy.maxed{--brk:rgba(150,180,210,.22);color:rgba(200,225,245,.3);cursor:default}
+
+/* ---- narrow visors ----
+   Two rungs of indent plus an icon plus a buy chip is the widest the bay ever
+   gets, and at 390px that has to fit without a single character wrapping or
+   clipping. Everything gives a little rather than one thing giving a lot. */
+@media (max-width:430px){
+  .shop-list{--step:11px;padding:8px 8px 10px}
+  .shop-row{gap:8px;padding-right:0}
+  .shop-row .s-ico{font-size:17px;width:19px}
+  .shop-row .s-name{font-size:9px;letter-spacing:.11em}
+  .shop-row .s-desc{font-size:8px;letter-spacing:.03em}
+  .buy{min-width:66px;padding:7px 6px;font-size:9px;letter-spacing:.08em}
+  .shop-x{font-size:7px;letter-spacing:.1em}
+}
 
 /* ---- next wave: the one affirmative control, so it gets the teal ---- */
 #shopNextBtn{

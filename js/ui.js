@@ -142,14 +142,44 @@ const UI = {
 
   /* ---------------- Shop ---------------- */
 
+  /* ============================================================
+     THE BAY
+     Thirteen items, but they are not thirteen peers: an item that hits its
+     ceiling hands off to a successor, and a flat list hides that completely —
+     the player reads MAX, concludes the stat is finished, and never finds the
+     thing that was built to continue it. So the bay is drawn as its tech
+     lines. One track per line, read left to right down the indent, stacked
+     vertically so the page still only ever scrolls one way.
+
+     The successor a line is WAITING for is drawn too, as a locked silhouette.
+     A ceiling you can see past is a goal; a ceiling you cannot is a wall.
+     ============================================================ */
+
+  /** Why a successor is still locked. Derived, because the predicate in
+   *  config knows the condition but nothing there can phrase it. */
+  _bayReq(item) {
+    switch (item.id) {
+      case 'velocity':     return 'AT FIRE RATE CAP';
+      case 'overpressure': return 'AT SHOT SPEED CAP';
+      case 'fission':      return 'AT CRIT CAP';
+      case 'blast':        return 'AT MAX RANGE';
+      case 'overclock':    return 'WAVE ' + OVERCLOCK_WAVE;
+      default:             return 'NOT YET';
+    }
+  },
+
   /**
-   * The bay holds more than a screenful now, and several items unlock partway
-   * through a run rather than being there from the start. In SHOP order those
-   * arrivals land at the BOTTOM of a list that scrolls — which is the one
-   * place a player will never look. An unlock nobody discovers may as well not
-   * exist, so the order is by what the player needs to see, not by array
-   * position: newly available first, then anything still worth buying, then
-   * the finished ones.
+   * The bay as lines of nodes, plus the NEW bookkeeping that used to live in
+   * shopRows.
+   *
+   * A locked node is only ever the NEXT step of a line — the first successor
+   * whose predecessor is on screen. Rendering the one after that as well would
+   * turn a goal into a roadmap and quietly leak how deep every chain runs.
+   *
+   * Hidden ROOTS stay dropped rather than becoming locked nodes. Shield
+   * Recharge is the case: before the barrier card exists the player has never
+   * seen a shield, and a silhouette promising one would be the shop explaining
+   * a mechanic it does not own.
    */
   shopRows(g) {
     // Waves only ever climb inside a run, so a wave that went backwards means
@@ -162,20 +192,48 @@ const UI = {
     // you did", so the opening stock is taken as read.
     const opening = Object.keys(this._shopSeen).length === 0;
 
-    const rows = SHOP.filter(item => !(item.hidden && item.hidden(g.t, g)));
-    for (const item of rows) {
+    const byId = {};
+    for (const item of SHOP) byId[item.id] = item;
+
+    const live = SHOP.filter(item => !(item.hidden && item.hidden(g.t, g)));
+    const isLive = {};
+    for (const item of live) isLive[item.id] = true;
+
+    for (const item of live) {
       item._new = !opening && !this._shopSeen[item.id];
       item._dead = !!(item.capped && item.capped(g.t, g)) ||
                    (g.shopLevels[item.id] || 0) >= item.max;
     }
-    // Stable, so items keep their authored order inside each band.
-    const rank = item => (item._new ? 0 : item._dead ? 2 : 1);
-    rows.sort((a, b) => rank(a) - rank(b));
+
+    const kids = {};
+    for (const item of SHOP) if (item.after) (kids[item.after] = kids[item.after] || []).push(item);
+
+    const lines = [];
+    for (const line of SHOP_LINES) {
+      const nodes = [];
+      // Depth-first from each root, so a node always follows the thing it
+      // succeeds and the indent alone tells you which way the line runs.
+      const walk = (item, depth) => {
+        if (!isLive[item.id]) {
+          // the one step past the frontier, shown as a silhouette and no further
+          if (item.after) nodes.push({ item, depth, locked: true });
+          return;
+        }
+        // A capped terminal is where a line would otherwise dead-end, so that
+        // is exactly when its cross-link to the shared sink earns its space.
+        const then = (item.then && item._dead) ? byId[item.then] : null;
+        nodes.push({ item, depth, locked: false, then });
+        for (const kid of kids[item.id] || []) walk(kid, depth + 1);
+      };
+      for (const item of SHOP) if (item.line === line.id && !item.after) walk(item, 0);
+      if (nodes.length) lines.push({ line, nodes });
+    }
 
     // Seen once shown, so NEW burns off after the visit that introduced it
-    // rather than nagging for the rest of the run.
-    for (const item of rows) this._shopSeen[item.id] = true;
-    return rows;
+    // rather than nagging for the rest of the run. Locked nodes are pointedly
+    // NOT marked: the visit that unlocks one is the visit that gets the badge.
+    for (const item of live) this._shopSeen[item.id] = true;
+    return lines;
   },
 
   showShop(g, onBuy, onNext) {
@@ -187,24 +245,66 @@ const UI = {
     // run the moment the thing it acts on exists
     for (const item of SHOP) item._row = null;
 
-    this.shopRows(g).forEach((item, i) => {
-      const row = document.createElement('div');
-      row.className = 'shop-row' + (item._new ? ' is-new' : '');
-      row.style.setProperty('--c', item.color);
-      row.style.animationDelay = (i * 0.04) + 's';
-      row.innerHTML =
-        `<div class="s-ico">${item.icon}</div>` +
-        `<div class="s-txt">` +
-          `<div class="s-name">${item.name}` +
-            (item._new ? `<span class="s-new">NEW</span>` : '') +
-            `<span class="s-lvl" data-lvl></span></div>` +
-          `<div class="s-desc">${item.desc()}</div>` +
-        `</div>` +
-        `<button class="buy brk" data-buy></button>`;
-      row.querySelector('[data-buy]').addEventListener('click', () => this._onBuy(item));
-      this.el.shopList.appendChild(row);
-      item._row = row;
-    });
+    let i = 0;
+    const stagger = el => { el.style.animationDelay = (i++ * 0.03) + 's'; };
+    // the lineage elbow, drawn only where there is a parent to hang off
+    const elbow = depth => depth ? '<span class="s-elb"></span>' : '';
+
+    for (const { line, nodes } of this.shopRows(g)) {
+      const head = document.createElement('div');
+      head.className = 'bay-line';
+      head.innerHTML = `<span class="bl-name">${line.name}</span><span class="bl-rule"></span>`;
+      stagger(head);
+      this.el.shopList.appendChild(head);
+
+      for (const { item, depth, locked, then } of nodes) {
+        const row = document.createElement('div');
+        row.className = 'shop-row' +
+          (locked ? ' is-locked' : '') + (!locked && item._new ? ' is-new' : '');
+        row.style.setProperty('--c', item.color);
+        row.style.setProperty('--d', depth);
+        stagger(row);
+
+        if (locked) {
+          // No cost, no button, no name: a silhouette states its condition and
+          // nothing else, so unlocking it is still a reveal.
+          row.innerHTML =
+            elbow(depth) +
+            `<div class="s-ico">\u{1F512}</div>` +
+            `<div class="s-txt"><div class="s-name">LOCKED` +
+              `<span class="s-req">${this._bayReq(item)}</span></div></div>`;
+        } else {
+          row.innerHTML =
+            elbow(depth) +
+            `<div class="s-ico">${item.icon}</div>` +
+            `<div class="s-txt">` +
+              `<div class="s-name">${item.name}` +
+                (item._new ? `<span class="s-new">NEW</span>` : '') +
+                `<span class="s-lvl" data-lvl></span></div>` +
+              `<div class="s-desc">${item.desc()}</div>` +
+            `</div>` +
+            `<button class="buy brk" data-buy></button>`;
+          row.querySelector('[data-buy]').addEventListener('click', () => this._onBuy(item));
+          item._row = row;
+        }
+        this.el.shopList.appendChild(row);
+
+        // Where a capped line continues: a pointer, not a node, because the
+        // thing it points at is bought in its own line and buying it twice
+        // here would be two rows for one purchase.
+        if (then) {
+          const x = document.createElement('div');
+          x.className = 'shop-x';
+          x.style.setProperty('--c', then.color);
+          x.style.setProperty('--d', depth + 1);
+          x.innerHTML = elbow(depth + 1) +
+            `<i>${then.icon}</i><span>CONTINUES AT ${then.name.toUpperCase()}` +
+            `<b>${then.line}</b></span>`;
+          stagger(x);
+          this.el.shopList.appendChild(x);
+        }
+      }
+    }
 
     this.syncShop(g);
     this.show(this.el.shopScreen);
@@ -212,6 +312,13 @@ const UI = {
     // actually something below the fold to hint at.
     requestAnimationFrame(() => {
       const list = this.el.shopList;
+      // Grouping put arrivals wherever their LINE is rather than at the top, so
+      // the one thing the badge exists to advertise can now open below the
+      // fold. Bring it up to meet the player instead of hoping they scroll.
+      const fresh = list.querySelector('.shop-row.is-new');
+      if (fresh && fresh.offsetTop + fresh.offsetHeight > list.clientHeight) {
+        list.scrollTop = Math.max(0, fresh.offsetTop - 46);
+      }
       const more = () => list.classList.toggle('has-more',
         list.scrollHeight - list.scrollTop > list.clientHeight + 2);
       list.onscroll = more;   // the hint retires once you actually reach the end

@@ -45,6 +45,11 @@ const SHIELD_KNOCK = 260;          // shove given to whatever runs into it
 const SHIELD_HIT_CD = 0.8;         // per-enemy seconds between impacts
 const MAX_BULLET_SPEED = 3200;     // past this a round crosses the arena inside one frame
 const OVERCLOCK_WAVE = 12;         // when the shop's exponential pricing starts to bite
+const BLAST_DETONATE = 74;         // fixed blast radii, scaled by t.blastMult
+const BLAST_FISSION = 66;
+const MAX_CARRY = 1;               // overkill can be recycled, never amplified
+const MAX_BRITTLE = 1.2;
+const MAX_BLAST = 3;               // a blast wider than this covers the screen
 
 /* ============================================================
    TOWER BASE STATS
@@ -114,6 +119,10 @@ function baseTower() {
     cashMult: 1,
     capPierce: 0,           // raises the per-hit cap armoured units impose
     critBlast: 0,           // fraction of a crit released as a blast — 0 until Fission Rounds
+    blastMult: 1,           // every fixed blast radius, scaled — Blast Calibration
+    carry: 0,               // fraction of overkill passed to the next target — Overpressure
+    brittle: 0,             // extra damage taken by anything the cryo field is slowing
+    barrierRegen: 0,        // fraction of shield capacity recovered per wave
     detonate: 0,            // fraction of a victim's max HP released on death
     bounces: 0,             // extra targets a bullet redirects to after a hit
   };
@@ -474,6 +483,37 @@ const UPGRADES = [
     },
   },
   {
+    /**
+     * Cryo Field's successor. The slow clamps at MAX_SLOW so the field cannot
+     * hold anything harder, but it still marks everything inside it — and a
+     * field that already covers the arena is a condition that is almost always
+     * true late, which is exactly what makes it worth paying for.
+     *
+     * Deliberately conditional rather than a flat damage card: it is worth
+     * nothing without the Cryo investment that unlocked it, which is what
+     * keeps it a continuation of that line instead of a better Damage.
+     */
+    id: 'brittle', name: 'Brittle', icon: '❅', color: C.cyan, max: 8, weight: 6,
+    unlock: s => s.t.slowPct >= MAX_SLOW - 1e-6,
+    capped: s => s.t.brittle >= MAX_BRITTLE - 1e-6,
+    desc: () => 'SLOWED TARGETS TAKE +15%',
+    apply: t => { t.brittle = Math.min(MAX_BRITTLE, t.brittle + 0.15); },
+  },
+  {
+    /**
+     * The barrier line's end, and the answer to its worst failure state: broke
+     * with the wall down, where the shield is not a spent resource any more but
+     * simply gone for the rest of the run.
+     *
+     * A trickle per wave rather than per second, so it never rescues a wall
+     * mid-collapse — it only means a run is never permanently without one.
+     */
+    id: 'barrierRegen', name: 'Field Regenerator', icon: '⟳', color: C.cyan, max: 6, weight: 6,
+    unlock: s => (s.perkLevels.arcBarrier || 0) >= 8,
+    desc: (t, lv) => (lv === 1 ? 'BARRIER SELF-CHARGES EACH WAVE' : '+8% CHARGE PER WAVE'),
+    apply: (t, lv) => { t.barrierRegen += (lv === 1 ? 0.12 : 0.08); },
+  },
+  {
     // Bulwarks clamp every hit to a slice of their max HP, so a damage build
     // has no answer to them but attack frequency. This is that answer.
     id: 'breach', name: 'Breaching Rounds', icon: '🗡️', color: C.steel, max: 5, weight: 5,
@@ -532,9 +572,30 @@ const UPGRADE_BY_ID = Object.fromEntries(UPGRADES.map(u => [u.id, u]));
              it feeds has hit a ceiling. Reads as MAX, exactly like running out
              of levels, because to the player it is the same thing.
    ============================================================ */
+/**
+ * The bay reads as tech lines, not as a list, because that is what it is: an
+ * item that caps hands off to a successor, and a player who cannot see the
+ * handoff experiences a ceiling instead of a progression.
+ *
+ * Every line terminates in something with no ceiling — most of them through
+ * Overclock, which is uncapped by design. That is what keeps "every cap gets a
+ * successor" a finite rule rather than an infinite regress: a line is allowed
+ * to end, but only on a node that never runs out.
+ */
+const SHOP_LINES = [
+  { id: 'WEAPON',  name: 'WEAPON'  },
+  { id: 'RATE',    name: 'RATE'    },
+  { id: 'OPTICS',  name: 'OPTICS'  },
+  { id: 'RANGE',   name: 'RANGE'   },
+  { id: 'HULL',    name: 'HULL'    },
+  { id: 'BARRIER', name: 'BARRIER' },
+  { id: 'SUPPORT', name: 'SUPPORT' },
+];
+
 const SHOP = [
   {
     id: 'repair', name: 'Field Repair', icon: '🔧', color: C.teal, max: Infinity,
+    line: 'SUPPORT',
     desc: () => 'RESTORE 40% HP',
     cost: (lv, g) => Math.round(30 + 10 * g.wave),
     enabled: t => t.hp < t.maxHp - 0.5,
@@ -542,12 +603,14 @@ const SHOP = [
   },
   {
     id: 'plating', name: 'Hull Plating', icon: '🛡️', color: C.teal, max: 99,
+    line: 'HULL',
     desc: () => '+25 MAX HP',
     cost: lv => Math.round(45 * Math.pow(1.5, lv)),
     apply: t => { t.maxHp += 25; t.hp += 25; },
   },
   {
     id: 'core', name: 'Damage Core', icon: '⚔️', color: C.red, max: 99,
+    line: 'WEAPON',
     desc: () => '+12% DAMAGE',
     cost: lv => Math.round(55 * Math.pow(1.55, lv)),
     apply: t => {
@@ -559,6 +622,7 @@ const SHOP = [
   },
   {
     id: 'coolant', name: 'Coolant', icon: '⏱️', color: C.gold, max: 99,
+    line: 'RATE',
     desc: () => '+10% FIRE RATE',
     cost: lv => Math.round(55 * Math.pow(1.55, lv)),
     // the gun cannot cycle faster than MAX_FIRE_RATE, so stop selling past it
@@ -567,6 +631,7 @@ const SHOP = [
   },
   {
     id: 'lens', name: 'Focusing Lens', icon: '📡', color: C.cyan, max: 20,
+    line: 'RANGE',
     desc: () => '+8% RANGE',
     cost: lv => Math.round(50 * Math.pow(1.45, lv)),
     // nothing can ever be further away than the spawn ring's far corner
@@ -575,6 +640,7 @@ const SHOP = [
   },
   {
     id: 'optics', name: 'Targeting Optics', icon: '💥', color: C.orange, max: 20,
+    line: 'OPTICS',
     desc: () => '+4% CRIT CHANCE',
     cost: lv => Math.round(60 * Math.pow(1.5, lv)),
     // Critical cards share this clamp and can reach it first
@@ -593,6 +659,7 @@ const SHOP = [
      * explained. The row appears the moment there is an emitter to charge.
      */
     id: 'shield', name: 'Shield Recharge', icon: '⬡', color: C.cyan, max: Infinity,
+    line: 'BARRIER',
     desc: () => 'RESTORE 45% SHIELD',
     cost: (lv, g) => Math.round(g.t.shieldMax * 0.08 + 10 * g.wave),
     hidden: t => t.shieldMax <= 0,
@@ -612,6 +679,7 @@ const SHOP = [
      * stops damage you already paid for from being thrown away.
      */
     id: 'velocity', name: 'Muzzle Velocity', icon: '➶', color: C.gold, max: 10,
+    line: 'RATE', after: 'coolant',
     desc: () => '+18% SHOT SPEED',
     cost: lv => Math.round(70 * Math.pow(1.4, lv)),
     // only sold once the gun has hit the wall Coolant runs into
@@ -632,6 +700,8 @@ const SHOP = [
      * once, and a blast is worth exactly as much as the crowd is dense.
      */
     id: 'fission', name: 'Fission Rounds', icon: '☢', color: C.orange, max: 10,
+    line: 'OPTICS', after: 'optics',
+    then: 'overclock',
     desc: () => 'CRITS DETONATE FOR +14%',
     // Priced above the other stat items on purpose. A blast turns one crit
     // into as many hits as there are bodies in 66px, so in the crowds this is
@@ -661,6 +731,7 @@ const SHOP = [
      * curve: this is meant to keep salvage relevant, not to replace the cards.
      */
     id: 'overclock', name: 'Overclock', icon: '⏦', color: C.red, max: Infinity,
+    line: 'WEAPON', after: 'core',
     desc: () => '+8% DAMAGE, NO LIMIT',
     cost: (lv, g) => Math.round(120 + 45 * g.wave),
     // Hidden early: before the shop starts pricing itself out there is nothing
@@ -674,7 +745,48 @@ const SHOP = [
     },
   },
   {
+    /**
+     * Focusing Lens' successor. Once the gun already reaches the far corner of
+     * the arena there is no distance left to buy, so reach turns into COVERAGE:
+     * the same shots, landing across more of the crowd.
+     *
+     * Only the fixed radii scale. Shockwave's is already t.range * 0.9 and so
+     * was never the thing that stalled — doubling up on it here would quietly
+     * pay the Range line twice for the same purchase.
+     */
+    id: 'blast', name: 'Blast Calibration', icon: '◉', color: C.cyan, max: 12,
+    line: 'RANGE', after: 'lens',
+    then: 'overclock',
+    desc: () => '+12% BLAST RADIUS',
+    cost: lv => Math.round(80 * Math.pow(1.45, lv)),
+    hidden: (t, g) => t.range < g.maxThreatDistance(),
+    capped: t => t.blastMult >= MAX_BLAST - 1e-6,
+    apply: t => { t.blastMult = Math.min(MAX_BLAST, t.blastMult * 1.12); },
+  },
+  {
+    /**
+     * Muzzle Velocity's successor, and the one upgrade aimed at a number the
+     * debrief already reports back: overkill, routinely a fifth of everything
+     * a run deals. At the fire rate cap with rounds arriving instantly, the
+     * waste is not aim or travel any more, it is that a killing blow spends
+     * whatever it had left over.
+     *
+     * Recycled, never amplified — MAX_CARRY is 1, so at best a round finishes
+     * one target and starts the next with exactly what it did not need. Above
+     * that it would be a damage multiplier wearing a disguise.
+     */
+    id: 'overpressure', name: 'Overpressure', icon: '⇴', color: C.gold, max: 7,
+    line: 'RATE', after: 'velocity',
+    then: 'overclock',
+    desc: () => 'OVERKILL CARRIES ON +15%',
+    cost: lv => Math.round(150 * Math.pow(1.5, lv)),
+    hidden: t => t.bulletSpeed < MAX_BULLET_SPEED - 1e-6,
+    capped: t => t.carry >= MAX_CARRY - 1e-6,
+    apply: t => { t.carry = Math.min(MAX_CARRY, t.carry + 0.15); },
+  },
+  {
     id: 'token', name: 'Reroll Token', icon: '🎲', color: C.purple, max: Infinity,
+    line: 'SUPPORT',
     desc: () => '+1 CARD REROLL',
     cost: (lv, g) => Math.round(70 * Math.pow(1.3, g.rerolls)),
     enabled: (t, g) => g.rerolls < 6,

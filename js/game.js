@@ -86,6 +86,7 @@ class Game {
     this.hpShown = 1;     // eased HP fraction, so the integrity arc drains smoothly
     this.heat = 0;        // barrel heat, 0..1 — climbs with sustained fire
     this._detDepth = 0;   // detonation chain depth guard
+    this._carryDepth = 0; // overkill carry chain depth guard
     this.betweenWaves = 0;
   }
 
@@ -110,6 +111,16 @@ class Game {
     this.spawnQueue = w.entries.map(e => ({ type: e.type, at: Math.max(0.4, e.delay + 0.6) }));
     this.waveTime = 0;
     this.isBossWave = w.boss;
+    /**
+     * Field Regenerator. Per WAVE, not per second, so it can never rescue a
+     * wall mid-collapse — what it buys is that a run is never permanently
+     * without a barrier just because the salvage ran out.
+     */
+    const t = this.t;
+    if (t.barrierRegen > 0 && t.shieldMax > 0 && t.shieldHp < t.shieldMax) {
+      t.shieldHp = Math.min(t.shieldMax, t.shieldHp + t.shieldMax * t.barrierRegen);
+      this.syncShield();
+    }
     UI.banner(w.boss ? `WAVE ${this.wave} — BOSS` : `WAVE ${this.wave}`, w.boss);
     if (this.wave > this.best) {
       this.best = this.wave;
@@ -296,6 +307,33 @@ class Game {
    * land here, and by the time a hit reaches Enemy.hurt they are
    * indistinguishable — so the caller has to say which one it is.
    */
+  /**
+   * Overpressure. A killing blow normally throws away whatever it had left
+   * over — routinely a fifth of everything a run deals, per the debrief — so
+   * this hands the excess to the nearest thing still standing.
+   *
+   * Bounded three ways, because a chain of kills that each feed the next is
+   * how you write an infinite loop by accident: a radius, so it reads as the
+   * round carrying on rather than damage teleporting across the arena; a depth
+   * guard, the same one Detonation needs; and MAX_CARRY at 1, so the excess is
+   * recycled and never amplified. It keeps the original source, because the
+   * weapon that fired the round is honestly the thing that dealt this damage.
+   */
+  carryOver(from, dmg, src) {
+    if (this._carryDepth >= 3 || dmg <= 0) return;
+    const reach = 220 * 220;
+    let best = null, bd = reach;
+    for (const e of this.enemies) {
+      if (e.dead || e === from) continue;
+      const d = dist2(from.x, from.y, e.x, e.y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    if (!best) return;
+    this._carryDepth++;
+    best.hurt(dmg, this, false, src);
+    this._carryDepth--;
+  }
+
   areaDamage(x, y, radius, dmg, color, knock, src) {
     const r2 = radius * radius;
     for (const e of this.enemies) {
@@ -323,7 +361,8 @@ class Game {
      */
     if (this.t.detonate > 0 && this._detDepth < 3) {
       this._detDepth++;
-      this.areaDamage(e.x, e.y, 74, e.maxHp * this.t.detonate, C.orange, 0, SRC.DETONATE);
+      this.areaDamage(e.x, e.y, BLAST_DETONATE * this.t.blastMult,
+        e.maxHp * this.t.detonate, C.orange, 0, SRC.DETONATE);
       this.rings.push(new Ring(e.x, e.y, 74, C.orange, 0.28));
       this._detDepth--;
     }
@@ -510,7 +549,7 @@ class Game {
     for (let i = 0; i < t.missileCount; i++) {
       const a = (i / t.missileCount) * TAU + rand(-0.2, 0.2);
       const m = new Missile(this.cx + Math.cos(a) * 20, this.cy + Math.sin(a) * 20,
-        a, t.missileDmg, t.missileRadius);
+        a, t.missileDmg, t.missileRadius * t.blastMult);
       m.speed = rand(90, 160);
       this.missiles.push(m);
     }
@@ -557,7 +596,8 @@ class Game {
 
     for (let i = 0; i < t.meteorCount; i++) {
       const e = pick(this.enemies);
-      this.meteors.push(new Meteor(e.x + rand(-30, 30), e.y + rand(-30, 30), t.meteorDmg, t.meteorRadius));
+      this.meteors.push(new Meteor(e.x + rand(-30, 30), e.y + rand(-30, 30),
+        t.meteorDmg, t.meteorRadius * t.blastMult));
     }
   }
 
