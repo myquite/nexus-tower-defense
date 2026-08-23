@@ -74,6 +74,20 @@ class Enemy {
     this.hp -= amount;
     this.flash = 1;
     g.spawnDamageText(this.x, this.y - this.size, amount, crit && !capped, capped);
+    /**
+     * Fission Rounds. Targeting Optics stops at MAX_CRIT_CHANCE, so past that
+     * ceiling the only way left to make a crit worth more is to make it hit
+     * more things. The blast is a fraction of the crit itself, which keeps it
+     * riding every damage multiplier for free.
+     *
+     * areaDamage always passes crit = false, so a blast can never set off
+     * another blast — the recursion ends at depth one by construction, with no
+     * depth counter needed. It can still KILL, and a kill re-enters killEnemy,
+     * but Detonation's own _detDepth guard already bounds that chain.
+     */
+    if (crit && g.t.critBlast > 0 && !this.dead) {
+      g.areaDamage(this.x, this.y, 66, amount * g.t.critBlast, C.orange);
+    }
     if (this.hp <= 0 && !this.dead) g.killEnemy(this);
   }
 

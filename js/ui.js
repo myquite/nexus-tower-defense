@@ -141,24 +141,63 @@ const UI = {
   hideUpgrades() { this.hide(this.el.upgradeScreen); },
 
   /* ---------------- Shop ---------------- */
+
+  /**
+   * The bay holds more than a screenful now, and several items unlock partway
+   * through a run rather than being there from the start. In SHOP order those
+   * arrivals land at the BOTTOM of a list that scrolls — which is the one
+   * place a player will never look. An unlock nobody discovers may as well not
+   * exist, so the order is by what the player needs to see, not by array
+   * position: newly available first, then anything still worth buying, then
+   * the finished ones.
+   */
+  shopRows(g) {
+    // Waves only ever climb inside a run, so a wave that went backwards means
+    // a redeploy — and NEW has to mean new to THIS run, not to this page load.
+    if (this._shopWave === undefined || g.wave < this._shopWave) this._shopSeen = {};
+    this._shopWave = g.wave;
+
+    // On the first visit of a run every item is literally new, and badging all
+    // seven says nothing. NEW has to mean "this appeared because of something
+    // you did", so the opening stock is taken as read.
+    const opening = Object.keys(this._shopSeen).length === 0;
+
+    const rows = SHOP.filter(item => !(item.hidden && item.hidden(g.t, g)));
+    for (const item of rows) {
+      item._new = !opening && !this._shopSeen[item.id];
+      item._dead = !!(item.capped && item.capped(g.t, g)) ||
+                   (g.shopLevels[item.id] || 0) >= item.max;
+    }
+    // Stable, so items keep their authored order inside each band.
+    const rank = item => (item._new ? 0 : item._dead ? 2 : 1);
+    rows.sort((a, b) => rank(a) - rank(b));
+
+    // Seen once shown, so NEW burns off after the visit that introduced it
+    // rather than nagging for the rest of the run.
+    for (const item of rows) this._shopSeen[item.id] = true;
+    return rows;
+  },
+
   showShop(g, onBuy, onNext) {
     this.el.shopNextBtn.onclick = onNext;
     this._onBuy = onBuy;
     this.el.shopList.innerHTML = '';
 
-    SHOP.forEach((item, i) => {
-      // rebuilt every visit, so an item can start hidden and appear later in
-      // the run the moment the thing it acts on exists
-      item._row = null;
-      if (item.hidden && item.hidden(g.t, g)) return;
+    // rebuilt every visit, so an item can start hidden and appear later in the
+    // run the moment the thing it acts on exists
+    for (const item of SHOP) item._row = null;
+
+    this.shopRows(g).forEach((item, i) => {
       const row = document.createElement('div');
-      row.className = 'shop-row';
+      row.className = 'shop-row' + (item._new ? ' is-new' : '');
       row.style.setProperty('--c', item.color);
       row.style.animationDelay = (i * 0.04) + 's';
       row.innerHTML =
         `<div class="s-ico">${item.icon}</div>` +
         `<div class="s-txt">` +
-          `<div class="s-name">${item.name}<span class="s-lvl" data-lvl></span></div>` +
+          `<div class="s-name">${item.name}` +
+            (item._new ? `<span class="s-new">NEW</span>` : '') +
+            `<span class="s-lvl" data-lvl></span></div>` +
           `<div class="s-desc">${item.desc()}</div>` +
         `</div>` +
         `<button class="buy brk" data-buy></button>`;
@@ -169,6 +208,15 @@ const UI = {
 
     this.syncShop(g);
     this.show(this.el.shopScreen);
+    // Measured after layout: the list only earns its bottom fade when there is
+    // actually something below the fold to hint at.
+    requestAnimationFrame(() => {
+      const list = this.el.shopList;
+      const more = () => list.classList.toggle('has-more',
+        list.scrollHeight - list.scrollTop > list.clientHeight + 2);
+      list.onscroll = more;   // the hint retires once you actually reach the end
+      more();
+    });
   },
 
   /** Refresh prices / affordability without rebuilding the DOM. */

@@ -43,6 +43,8 @@ const SHIELD_RADIUS = 210;         // where the ring sits at level 1
 const SHIELD_WIDEN = 1.1;          // per level, clamped to the arena at draw time
 const SHIELD_KNOCK = 260;          // shove given to whatever runs into it
 const SHIELD_HIT_CD = 0.8;         // per-enemy seconds between impacts
+const MAX_BULLET_SPEED = 3200;     // past this a round crosses the arena inside one frame
+const OVERCLOCK_WAVE = 12;         // when the shop's exponential pricing starts to bite
 
 /* ============================================================
    TOWER BASE STATS
@@ -53,7 +55,7 @@ function baseTower() {
     damage: 10,
     fireRate: 2.2,          // shots per second
     range: 300,
-    bulletSpeed: 620,
+    bulletSpeed: 620,      // raised only by Muzzle Velocity, once Coolant caps
     shots: 1,               // multishot projectile count
     pierce: 0,
     critChance: 0.05,
@@ -111,6 +113,7 @@ function baseTower() {
     slowPct: 0,             // cryo field slow inside range
     cashMult: 1,
     capPierce: 0,           // raises the per-hit cap armoured units impose
+    critBlast: 0,           // fraction of a crit released as a blast — 0 until Fission Rounds
     detonate: 0,            // fraction of a victim's max HP released on death
     bounces: 0,             // extra targets a bullet redirects to after a hit
   };
@@ -595,6 +598,77 @@ const SHOP = [
     hidden: t => t.shieldMax <= 0,
     enabled: t => t.shieldHp < t.shieldMax - 0.5,
     apply: t => { t.shieldHp = Math.min(t.shieldMax, t.shieldHp + t.shieldMax * 0.45); },
+  },
+  {
+    /**
+     * Coolant's successor, and the answer to a gun that physically cannot
+     * cycle any faster.
+     *
+     * bulletSpeed is 620 and nothing else in the game touches it, which is a
+     * problem that only shows up once Range is maxed: a round crossing 1150px
+     * of arena takes nearly two seconds, so at the fire rate cap there are
+     * ~110 rounds in the air at any moment and a good share of them are
+     * flying at things that are already dead. This does not add damage; it
+     * stops damage you already paid for from being thrown away.
+     */
+    id: 'velocity', name: 'Muzzle Velocity', icon: '➶', color: C.gold, max: 14,
+    desc: () => '+18% SHOT SPEED',
+    cost: lv => Math.round(70 * Math.pow(1.4, lv)),
+    // only sold once the gun has hit the wall Coolant runs into
+    hidden: t => t.fireRate < MAX_FIRE_RATE - 1e-6,
+    capped: t => t.bulletSpeed >= MAX_BULLET_SPEED - 1e-6,
+    apply: t => { t.bulletSpeed = Math.min(MAX_BULLET_SPEED, t.bulletSpeed * 1.18); },
+  },
+  {
+    /**
+     * Targeting Optics' successor. Crit CHANCE stops at MAX_CRIT_CHANCE, so
+     * this buys what a crit does instead of how often one lands.
+     *
+     * Blast damage is the one thing that gets better as the waves get worse:
+     * late waves are not harder single enemies so much as far more of them at
+     * once, and a blast is worth exactly as much as the crowd is dense.
+     */
+    id: 'fission', name: 'Fission Rounds', icon: '☢', color: C.orange, max: 10,
+    desc: () => 'CRITS DETONATE FOR +14%',
+    // Priced above the other stat items on purpose. A blast turns one crit
+    // into as many hits as there are bodies in 66px, so in the crowds this is
+    // sold into it is worth several times a flat damage buy — measured at
+    // roughly 2x total output by the third level.
+    cost: lv => Math.round(130 * Math.pow(1.5, lv)),
+    hidden: t => t.critChance < MAX_CRIT_CHANCE - 1e-6,
+    apply: t => { t.critBlast += 0.14; },
+  },
+  {
+    /**
+     * The sink for late salvage, and the only uncapped source of power in the
+     * shop.
+     *
+     * Every other item is priced at roughly x1.5 per level owned, so it prices
+     * itself out around level 10-12 — a Damage Core at level 15 costs about
+     * seventeen waves of income. Salvage income, meanwhile, is close to linear
+     * in the wave number while enemy HP compounds at 1.185^wave. The result is
+     * a late game where the Salvage Bay has quietly stopped mattering and the
+     * cards carry the entire run.
+     *
+     * So this one is priced off the WAVE instead of off how many you own.
+     * Income per wave and cost per wave then grow together, which holds the
+     * number of purchases per wave roughly constant — and a constant number of
+     * multiplicative buys per wave is itself an exponential, which is the only
+     * shape that can stay with the HP curve. It stays deliberately behind that
+     * curve: this is meant to keep salvage relevant, not to replace the cards.
+     */
+    id: 'overclock', name: 'Overclock', icon: '⏦', color: C.red, max: Infinity,
+    desc: () => '+8% DAMAGE, NO LIMIT',
+    cost: (lv, g) => Math.round(120 + 45 * g.wave),
+    // Hidden early: before the shop starts pricing itself out there is nothing
+    // for this to solve, and an uncapped buy would just warp the opening.
+    hidden: (t, g) => g.wave < OVERCLOCK_WAVE,
+    apply: t => {
+      t.damage *= 1.08; t.orbDmg *= 1.08; t.missileDmg *= 1.08;
+      t.chainDmg *= 1.08; t.meteorDmg *= 1.08; t.rayDps *= 1.08;
+      t.novaBase *= 1.08; t.novaDmg *= 1.08;
+      t.shieldBase *= 1.08; t.shieldDmg *= 1.08;
+    },
   },
   {
     id: 'token', name: 'Reroll Token', icon: '🎲', color: C.purple, max: Infinity,

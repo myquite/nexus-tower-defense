@@ -3,3 +3,6 @@
 
 # local play-test captures
 screenshots/
+
+# local agent state and scratch worktrees
+.claude/

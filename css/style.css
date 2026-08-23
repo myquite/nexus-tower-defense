@@ -338,6 +338,35 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 .shop-row:last-child{border-bottom:none}
 .shop-row:hover{background-color:rgba(90,216,255,.045)}
 
+/* ---- a newly unlocked item, on the one visit that introduces it ----
+   Sorted to the top already; this is what makes it read as an arrival rather
+   than as the list having quietly grown by one. The tick down the left edge
+   is the row's existing motif, just turned up. */
+.shop-row.is-new{
+  background-color:rgba(90,216,255,.05);
+  background-size:2px 100%;
+}
+.shop-row .s-new{
+  font-family:'Orbitron',sans-serif;
+  font-size:7px;font-weight:700;letter-spacing:.2em;
+  color:#03121f;background:var(--c);
+  padding:2px 5px 1px;
+  animation:newPulse 1.6s ease-in-out infinite;
+}
+@keyframes newPulse{
+  0%,100%{opacity:1}
+  50%{opacity:.55}
+}
+
+/* ---- more below the fold ----
+   The bay outgrew one screen once the late unlocks landed, and a hard-cropped
+   last row reads as the end of the list. Only applied when there is genuinely
+   more to reach. */
+.shop-list.has-more{
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);
+}
+
 /* rows print in from the left, like a manifest listing out */
 @keyframes rowDeploy{
   from{opacity:0;transform:translateX(-10px)}
