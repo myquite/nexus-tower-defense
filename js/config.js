@@ -611,11 +611,14 @@ const SHOP = [
      * flying at things that are already dead. This does not add damage; it
      * stops damage you already paid for from being thrown away.
      */
-    id: 'velocity', name: 'Muzzle Velocity', icon: '➶', color: C.gold, max: 14,
+    id: 'velocity', name: 'Muzzle Velocity', icon: '➶', color: C.gold, max: 10,
     desc: () => '+18% SHOT SPEED',
     cost: lv => Math.round(70 * Math.pow(1.4, lv)),
     // only sold once the gun has hit the wall Coolant runs into
     hidden: t => t.fireRate < MAX_FIRE_RATE - 1e-6,
+    // 10 levels is exactly where 620 x 1.18^n reaches MAX_BULLET_SPEED, so the
+    // level count and the real ceiling agree and neither can advertise a
+    // purchase the other would refuse
     capped: t => t.bulletSpeed >= MAX_BULLET_SPEED - 1e-6,
     apply: t => { t.bulletSpeed = Math.min(MAX_BULLET_SPEED, t.bulletSpeed * 1.18); },
   },
