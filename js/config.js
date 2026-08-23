@@ -30,6 +30,19 @@ const C = {
 const MAX_FIRE_RATE = 60;          // shots per second
 const MAX_VOLLEYS_PER_FRAME = 4;   // guard against a long frame dumping a burst
 const MAX_CRIT_CHANCE = 0.85;      // matches the clamp in the crit upgrades
+const MAX_SLOW = 0.72;             // cryo can never freeze a wave outright
+/*
+   The barrier ring. Capacity is a buffer measured in enemy damage, not a
+   second health bar: it does not regenerate, so what it buys is seconds of
+   total immunity and a kill zone out at the perimeter, and then it is gone
+   until you pay to bring it back.
+*/
+const SHIELD_BASE = 1800;          // capacity at level 1
+const SHIELD_GROWTH = 1.9;         // per level after that
+const SHIELD_RADIUS = 210;         // where the ring sits at level 1
+const SHIELD_WIDEN = 1.1;          // per level, clamped to the arena at draw time
+const SHIELD_KNOCK = 260;          // shove given to whatever runs into it
+const SHIELD_HIT_CD = 0.8;         // per-enemy seconds between impacts
 
 /* ============================================================
    TOWER BASE STATS
@@ -86,6 +99,13 @@ function baseTower() {
     novaDmg: 0,      // 0 until Shockwave is taken — fireNova gates on this
     novaBase: 34,    // what Shockwave adopts, so damage taken BEFORE it still counts
     novaKnock: 90,
+
+    // barrier ring (Wide Orbit Defenses)
+    shieldMax: 0,           // 0 until the card is taken
+    shieldHp: 0,
+    shieldRadius: 0,
+    shieldDmg: 0,           // 0 until Arc Barrier is taken — the wall is inert until then
+    shieldBase: 60,         // what Arc Barrier adopts, so damage banked BEFORE it still counts
 
     // utility
     slowPct: 0,             // cryo field slow inside range
@@ -254,8 +274,14 @@ function waveScale(wave) {
 
 /* ============================================================
    UPGRADES
-   Each: id, name, icon, color, max, weight, unlock(state),
+   Each: id, name, icon, color, max, weight, unlock(state), capped(state),
          desc(tower, nextLevel), apply(tower)
+
+   unlock — not offered YET; may open up later (Death Ray before wave 4).
+   capped — never worth offering again, because the stat it feeds has hit a
+            hard ceiling well before its level max. Same idea as the shop's
+            capped, and for the same reason: a card that does nothing is worse
+            than no card at all, since it eats one of the two slots.
    ============================================================ */
 const UPGRADES = [
   {
@@ -265,6 +291,7 @@ const UPGRADES = [
       t.damage *= 1.4; t.orbDmg *= 1.4; t.missileDmg *= 1.4;
       t.chainDmg *= 1.4; t.meteorDmg *= 1.4; t.rayDps *= 1.4;
       t.novaBase *= 1.4; t.novaDmg *= 1.4;
+      t.shieldBase *= 1.4; t.shieldDmg *= 1.4;
     },
   },
   {
@@ -279,7 +306,10 @@ const UPGRADES = [
     apply: (t, lv) => { t.shots += (lv === 1 ? 4 : 2); },
   },
   {
+    // 12 levels is far more than the arena needs — the gun outranges the
+    // spawn ring by level 5 or so. Past that Wide Orbit takes over.
     id: 'range', name: 'Range', icon: '📡', color: C.cyan, max: 12, weight: 6,
+    capped: s => s.t.range >= s.maxThreatDistance(),
     desc: () => '+22% RANGE',
     apply: t => { t.range *= 1.22; },
   },
@@ -357,8 +387,9 @@ const UPGRADES = [
   },
   {
     id: 'cryo', name: 'Cryo Field', icon: '❄️', color: C.cyan, max: 6, weight: 5,
+    capped: s => s.t.slowPct >= MAX_SLOW - 1e-6,
     desc: () => 'SLOW EVERYTHING NEARBY',
-    apply: t => { t.slowPct = Math.min(0.72, t.slowPct + 0.18); },
+    apply: t => { t.slowPct = Math.min(MAX_SLOW, t.slowPct + 0.18); },
   },
   {
     id: 'thorns', name: 'Reactive Plating', icon: '🜲', color: C.purple, max: 8, weight: 4,
@@ -385,6 +416,58 @@ const UPGRADES = [
       t.damage *= 1.35; t.orbDmg *= 1.35; t.missileDmg *= 1.35;
       t.chainDmg *= 1.35; t.meteorDmg *= 1.35; t.rayDps *= 1.35;
       t.novaBase *= 1.35; t.novaDmg *= 1.35;
+      t.shieldBase *= 1.35; t.shieldDmg *= 1.35;
+    },
+  },
+  {
+    // Range's twin. Once the gun already covers the whole arena there is
+    // nothing left to reach, so the reach turns into something physical: a
+    // barrier ring out at the perimeter that the swarm simply cannot cross.
+    //
+    // Unlike every other defensive card this one is spent rather than owned.
+    // It has no regeneration — it holds absolutely until its capacity is gone,
+    // then it drops and stays down until you buy a recharge in the Salvage
+    // Bay. That is the whole point: a wall that always works, sometimes.
+    id: 'wideOrbit', name: 'Wide Orbit Defenses', icon: '🛰️', color: C.cyan, max: 6, weight: 7,
+    unlock: s => s.t.range >= s.maxThreatDistance(),
+    desc: (t, lv) => (lv === 1 ? 'BARRIER RING — NOTHING CROSSES IT' : '+90% CAPACITY, FULL CHARGE'),
+    apply: (t, lv) => {
+      if (lv === 1) {
+        t.shieldMax = SHIELD_BASE;
+        t.shieldRadius = SHIELD_RADIUS;
+      } else {
+        t.shieldMax = Math.round(t.shieldMax * SHIELD_GROWTH);
+        // Still widened, but never advertised: Game.shieldRing clamps the ring
+        // to the arena, and on a phone that clamp already bites at level 1, so
+        // a card promising a wider ring would be lying on every handset.
+        t.shieldRadius *= SHIELD_WIDEN;
+      }
+      t.shieldHp = t.shieldMax;   // a new emitter comes up fully charged
+    },
+  },
+  {
+    /**
+     * Where the barrier's later levels go once it cannot get any bigger.
+     *
+     * The ring is clamped to the arena by Game.shieldRing, and on a phone that
+     * clamp bites at level 1 — so size stops being a place to put value almost
+     * immediately. Damage is: the wall already holds the swarm still, in one
+     * ring, at a known distance, which is the best kill zone in the game and
+     * until now it did nothing with it.
+     *
+     * There is real tension in it rather than a flat gain: contact both drains
+     * capacity and deals damage, so a barrier that kills faster is a barrier
+     * that gets hit fewer times and lasts longer. Investing here buys the
+     * shield's uptime as much as it buys the kill.
+     */
+    id: 'arcBarrier', name: 'Arc Barrier', icon: '✴️', color: C.cyan, max: 8, weight: 7,
+    unlock: s => s.t.shieldMax > 0,
+    desc: (t, lv) => (lv === 1 ? 'THE WALL BURNS WHAT TOUCHES IT' : '+50% BARRIER DAMAGE'),
+    // Adopt shieldBase, never a literal — assigning 60 here would throw away
+    // every damage multiplier banked before Arc Barrier was offered.
+    apply: (t, lv) => {
+      if (lv === 1) t.shieldDmg = t.shieldBase;
+      else { t.shieldDmg *= 1.5; t.shieldBase *= 1.5; }
     },
   },
   {
@@ -419,6 +502,7 @@ const UPGRADES = [
       t.damage *= 1.8; t.orbDmg *= 1.8; t.missileDmg *= 1.8;
       t.chainDmg *= 1.8; t.meteorDmg *= 1.8; t.rayDps *= 1.8;
       t.novaBase *= 1.8; t.novaDmg *= 1.8;
+      t.shieldBase *= 1.8; t.shieldDmg *= 1.8;
       t.maxHp = Math.max(40, Math.round(t.maxHp * 0.75));
       t.hp = Math.min(t.hp, t.maxHp);   // never leave hp above the new ceiling
     },
@@ -434,10 +518,13 @@ const UPGRADE_BY_ID = Object.fromEntries(UPGRADES.map(u => [u.id, u]));
    lets a good run compound instead of being purely luck of the draw.
 
    Each: id, name, icon, color, max, desc(level), cost(level, game),
-         enabled(tower, game), capped(tower, game), apply(tower, game)
+         enabled(tower, game), capped(tower, game), hidden(tower, game),
+         apply(tower, game)
 
    enabled — false when the item is useless RIGHT NOW but may matter again
              (Field Repair at full health). Dims the row.
+   hidden  — the item has nothing to act on yet and saying so would only
+             confuse (Shield Recharge before the barrier card). Drops the row.
    capped  — true when the item can never do anything again, because the stat
              it feeds has hit a ceiling. Reads as MAX, exactly like running out
              of levels, because to the player it is the same thing.
@@ -464,6 +551,7 @@ const SHOP = [
       t.damage *= 1.12; t.orbDmg *= 1.12; t.missileDmg *= 1.12;
       t.chainDmg *= 1.12; t.meteorDmg *= 1.12; t.rayDps *= 1.12;
       t.novaBase *= 1.12; t.novaDmg *= 1.12;
+      t.shieldBase *= 1.12; t.shieldDmg *= 1.12;
     },
   },
   {
@@ -489,6 +577,24 @@ const SHOP = [
     // Critical cards share this clamp and can reach it first
     capped: t => t.critChance >= MAX_CRIT_CHANCE - 1e-6,
     apply: t => { t.critChance = Math.min(MAX_CRIT_CHANCE, t.critChance + 0.04); },
+  },
+  {
+    /**
+     * The other half of the barrier card. Priced off capacity rather than a
+     * flat curve, because a level-6 emitter holds twenty times what a level-1
+     * one does — a fixed price would make the late shield free to run.
+     *
+     * hidden, not capped, before the card is taken: a row reading MAX would
+     * say "you have finished with this", when the truth is the opposite — the
+     * player has never seen the shield and the shop is not where it is
+     * explained. The row appears the moment there is an emitter to charge.
+     */
+    id: 'shield', name: 'Shield Recharge', icon: '⬡', color: C.cyan, max: Infinity,
+    desc: () => 'RESTORE 45% SHIELD',
+    cost: (lv, g) => Math.round(g.t.shieldMax * 0.08 + 10 * g.wave),
+    hidden: t => t.shieldMax <= 0,
+    enabled: t => t.shieldHp < t.shieldMax - 0.5,
+    apply: t => { t.shieldHp = Math.min(t.shieldMax, t.shieldHp + t.shieldMax * 0.45); },
   },
   {
     id: 'token', name: 'Reroll Token', icon: '🎲', color: C.purple, max: Infinity,

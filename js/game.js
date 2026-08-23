@@ -73,6 +73,8 @@ class Game {
     this.rayAngle = 0;
     this.orbAngle = 0;
     this.rangePulse = 0;
+    this.shieldFlash = 0;     // kicks to 1 on each impact, decays
+    this.shieldHitAngle = 0;  // where the last impact landed, for the flare
     this.shakeAmt = 0;
     this.hitFlash = 0;
     this.ringOpen = 0;    // 0 = collapsed to a flat line, 1 = fully open ellipse
@@ -129,6 +131,10 @@ class Game {
       const lv = this.perkLevels[u.id] || 0;
       if (lv >= u.max) return false;
       if (u.unlock && !u.unlock(this)) return false;
+      // a stat can hit its ceiling long before its level max — Range outreaches
+      // the arena around level 5 of 12. Keep offering it and the player is
+      // picking between one live card and one that does nothing.
+      if (u.capped && u.capped(this)) return false;
       return true;
     });
 
@@ -161,6 +167,7 @@ class Game {
     this.perkLevels[u.id] = lv;
     u.apply(this.t, lv);
     this.syncOrbs();
+    this.syncShield();
     UI.syncPerks(this);
     UI.hideUpgrades();
     this.rings.push(new Ring(this.cx, this.cy, this.t.range, u.color, 0.7));
@@ -184,6 +191,7 @@ class Game {
     this.shopLevels[item.id] = lv + 1;
     item.apply(this.t, this);
     this.syncOrbs();
+    this.syncShield();
     UI.syncShop(this);
   }
 
@@ -401,6 +409,66 @@ class Game {
     return Math.hypot(this.w / 2 + this.spawnMargin, this.h / 2 + this.spawnMargin);
   }
 
+  /* ---- barrier ring ---- */
+
+  shieldUp() { return this.t.shieldHp > 0; }
+
+  /**
+   * Where the ring actually sits. The canvas is the whole window, so a radius
+   * that looks generous on a desktop is off-screen on a phone; clamp it to the
+   * arena rather than let the player buy a barrier they cannot see. Held off
+   * the core by towerRadius so it can never form inside the tower itself.
+   */
+  shieldRing() {
+    return clamp(this.t.shieldRadius, this.towerRadius + 40, Math.min(this.w, this.h) * 0.42);
+  }
+
+  /**
+   * Anything already inside the ring when it comes up stays inside — the
+   * barrier forms around it rather than flinging it out through its own wall.
+   * In practice the shield only ever comes up between waves, when there is
+   * nothing to mark; this is what keeps that assumption from being load-
+   * bearing, and it is the only thing that ever sets pastShield.
+   */
+  syncShield() {
+    if (!this.shieldUp()) return;
+    const ring = this.shieldRing();
+    for (const e of this.enemies) {
+      if (dist(e.x, e.y, this.cx, this.cy) < ring + e.size * 0.5) e.pastShield = true;
+    }
+  }
+
+  /**
+   * Called by an enemy that just ran into the ring. Returns nothing — the
+   * enemy handles being stopped; this only spends the barrier and reacts.
+   */
+  drainShield(amount, x, y) {
+    const t = this.t;
+    t.shieldHp -= amount;
+    this.shieldFlash = 1;
+    this.shieldHitAngle = Math.atan2(y - this.cy, x - this.cx);
+    this.burst(x, y, C.cyan, 5, 0.7);
+    if (t.shieldHp <= 0) this.collapseShield();
+  }
+
+  /**
+   * The barrier failing is the single most important thing that can happen in
+   * a wave — everything the player was ignoring is suddenly walking straight
+   * at the core — so it gets the loudest feedback in the game short of dying.
+   */
+  collapseShield() {
+    const t = this.t;
+    t.shieldHp = 0;
+    const ring = this.shieldRing();
+    for (let i = 0; i < 40; i++) {
+      const a = (i / 40) * TAU;
+      this.burst(this.cx + Math.cos(a) * ring, this.cy + Math.sin(a) * ring, C.cyan, 3, 1.2);
+    }
+    this.rings.push(new Ring(this.cx, this.cy, ring, C.cyan, 0.9));
+    this.shake(14);
+    this.shieldFlash = 0;
+  }
+
   fireMissiles(dt) {
     const t = this.t;
     if (t.missileCount <= 0) return;
@@ -526,6 +594,7 @@ class Game {
     // ambient always animates
     for (const d of this.drifters) d.update(dt, this.w, this.h);
     this.hitFlash = Math.max(0, this.hitFlash - dt * 2.6);
+    this.shieldFlash = Math.max(0, this.shieldFlash - dt * 3.2);
     this.shakeAmt *= Math.pow(0.0008, dt);
     this.rangePulse += dt;
 
@@ -647,6 +716,7 @@ class Game {
     for (const m of this.missiles) m.draw(ctx);
     for (const p of this.particles) p.draw(ctx);
     this.drawOrbs(ctx);
+    this.drawShield(ctx);
     this.drawTower(ctx);
 
     ctx.restore();
@@ -725,6 +795,67 @@ class Game {
       ctx.strokeStyle = '#fff6d2';
       ctx.lineWidth = 4;
       ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * The barrier. Charge is read off the ring itself rather than off a number
+   * in the corner: a full shield is a bright continuous wall, a spent one is a
+   * dim flickering outline, so the player can see it is about to fail without
+   * ever looking away from the swarm. Impacts flare locally at the point of
+   * contact, which is what makes a wall being pushed on look like a wall.
+   */
+  drawShield(ctx) {
+    const t = this.t;
+    if (t.shieldMax <= 0 || t.shieldHp <= 0) return;
+    const frac = clamp(t.shieldHp / t.shieldMax, 0, 1);
+    const r = this.shieldRing();
+    // A nearly-spent emitter stutters. Tied to rangePulse, not a random value,
+    // so the flicker is a steady failing-hardware pulse and not visual noise.
+    const fail = frac < 0.3 ? 0.72 + 0.28 * Math.sin(this.rangePulse * 22) : 1;
+
+    ctx.save();
+    // body — brightest at full charge, barely there when nearly spent
+    const grad = ctx.createRadialGradient(this.cx, this.cy, r * 0.82, this.cx, this.cy, r);
+    grad.addColorStop(0, 'rgba(40,140,255,0)');
+    grad.addColorStop(1, `rgba(40,140,255,${(0.05 + 0.16 * frac) * fail})`);
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, TAU); ctx.fill();
+
+    // rim
+    ctx.strokeStyle = C.cyan;
+    ctx.globalAlpha = (0.3 + 0.55 * frac) * fail;
+    ctx.lineWidth = 1.4 + 2.2 * frac;
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, TAU); ctx.stroke();
+
+    // Arc Barrier. A wall that kills has to look like it kills, or the player
+    // reads a dead ring and a mystery kill feed. Short arcs skitter around the
+    // rim, brighter with charge, so a live barrier is obvious at a glance and
+    // a spent one cannot be mistaken for it.
+    if (t.shieldDmg > 0) {
+      // Near-white, not more cyan. An arc the same colour as the rim just
+      // reads as a thicker rim; the whole point is that it should not look
+      // like the wall, it should look like something crawling on it.
+      ctx.strokeStyle = '#dff4ff';
+      ctx.lineWidth = 1.6;
+      for (let i = 0; i < 7; i++) {
+        const a = rand(TAU);
+        ctx.globalAlpha = rand(0.35, 0.95) * (0.4 + 0.6 * frac) * fail;
+        ctx.beginPath();
+        ctx.arc(this.cx, this.cy, r + rand(-7, 7), a, a + rand(0.04, 0.14));
+        ctx.stroke();
+      }
+      ctx.strokeStyle = C.cyan;
+    }
+
+    // impact flare, centred on wherever the last hit landed
+    if (this.shieldFlash > 0.01) {
+      ctx.globalAlpha = this.shieldFlash * 0.9;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(this.cx, this.cy, r, this.shieldHitAngle - 0.34, this.shieldHitAngle + 0.34);
+      ctx.stroke();
     }
     ctx.restore();
   }

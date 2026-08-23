@@ -52,6 +52,12 @@ class Enemy {
     this.flash = 0;
     this.slowT = 0;
     this.knockX = 0; this.knockY = 0;
+    // Set only by Game.syncShield, for something the barrier came up around.
+    // Never derived from position at contact time: the block clamps an enemy
+    // to exactly the wall, and re-deriving "was it outside?" from that
+    // position the next frame is a coin-flip on the last bit of a float — lose
+    // it once and that enemy is exempt from the wall for the rest of its life.
+    this.pastShield = false;
     this.dead = false;
     this.scaleRef = scale;
   }
@@ -96,6 +102,36 @@ class Enemy {
     // knockback decay
     this.knockX *= Math.pow(0.02, dt);
     this.knockY *= Math.pow(0.02, dt);
+
+    /**
+     * The barrier ring. This is a hard positional stop, not a damage trade:
+     * anything that did not start inside is put back on the outside every
+     * frame it tries to cross, so nothing can be within the shield while the
+     * shield is up — not a boss, not a shard, however fast it arrived.
+     */
+    if (g.shieldUp() && !this.pastShield) {
+      const stop = g.shieldRing() + this.size * 0.5;
+      const nd = Math.hypot(g.cx - this.x, g.cy - this.y) || 1;
+      if (nd < stop) {
+        this.x = g.cx + ((this.x - g.cx) / nd) * stop;
+        this.y = g.cy + ((this.y - g.cy) / nd) * stop;
+        this.shieldCd = (this.shieldCd || 0) - dt;
+        if (this.shieldCd <= 0) {
+          this.shieldCd = SHIELD_HIT_CD;
+          g.drainShield(this.dmg, this.x, this.y);
+          // Arc Barrier. Burn first, then knock back: hurt can kill, and
+          // killEnemy may split this into shards that would otherwise be
+          // handed a knockback belonging to a corpse.
+          if (g.t.shieldDmg > 0) {
+            this.hurt(g.t.shieldDmg, g, false);
+            if (this.dead || this.hp <= 0) return;
+          }
+          this.knockback(g.cx, g.cy, SHIELD_KNOCK);
+        }
+        return;   // never falls through to the core contact below
+      }
+      this.shieldCd = Math.max(0, (this.shieldCd || 0) - dt);
+    }
 
     // reached the core
     if (d < g.towerRadius + this.size * 0.5) {

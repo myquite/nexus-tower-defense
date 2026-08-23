@@ -147,6 +147,10 @@ const UI = {
     this.el.shopList.innerHTML = '';
 
     SHOP.forEach((item, i) => {
+      // rebuilt every visit, so an item can start hidden and appear later in
+      // the run the moment the thing it acts on exists
+      item._row = null;
+      if (item.hidden && item.hidden(g.t, g)) return;
       const row = document.createElement('div');
       row.className = 'shop-row';
       row.style.setProperty('--c', item.color);
