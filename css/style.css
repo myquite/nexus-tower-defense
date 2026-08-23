@@ -649,3 +649,161 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
   color:rgba(255,190,120,.85);
   text-align:right;backdrop-filter:none;
 }
+
+/* ============================================================
+   DEBRIEF — THE POST-RUN BREAKDOWN
+   The run read back inside the breach panel. It obeys the same rules as the
+   rest of the visor: bracketed frame, Orbitron micro-caps for labels,
+   brightness rather than weight for hierarchy, and every colour borrowed from
+   the thing it describes — a weapon's bar is its own colour, a hostile's row
+   is the colour it was on screen.
+
+   It scrolls inside its own frame rather than growing the panel, so on a
+   handset REDEPLOY stays put at the bottom however long the run was.
+   ============================================================ */
+/* The debrief makes this the tallest panel in the game, so on a short screen
+   the panel itself gets the last word — nothing may end up off-frame above the
+   title or below REDEPLOY. */
+.dead-panel{max-height:calc(100% - 16px);overflow-y:auto;overscroll-behavior:contain}
+.dead-panel::-webkit-scrollbar{width:0}
+
+.rpt{
+  --arm:14px; --brk:rgba(255,93,125,.35);
+  margin-top:18px;text-align:left;
+  max-height:min(44vh,360px);overflow-y:auto;overscroll-behavior:contain;
+  padding:12px 13px;
+  background-color:rgba(6,14,28,.55);
+  /* keep the brackets pinned while the report scrolls inside them */
+  background-attachment:local,local,local,local,local,local,local,local,scroll;
+  animation:visorFade .3s .1s ease-out both;
+}
+.rpt::-webkit-scrollbar{width:4px}
+.rpt::-webkit-scrollbar-thumb{background:rgba(90,216,255,.28)}
+.rpt::-webkit-scrollbar-track{background:transparent}
+
+.rpt-sec + .rpt-sec{margin-top:16px}
+
+/* section rule: the label, what it totals, and a hairline under both */
+.rpt-head{
+  display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;letter-spacing:.28em;
+  color:rgba(63,240,200,.8);
+  border-bottom:1px solid rgba(90,216,255,.12);
+  padding-bottom:6px;margin-bottom:9px;
+}
+.rpt-head b{font-weight:700;letter-spacing:.16em;color:rgba(150,190,225,.5)}
+
+/* ---- weapon systems ---- */
+.wrow{display:flex;align-items:flex-start;gap:9px;padding:5px 0}
+.wrow .w-ico{
+  width:20px;flex-shrink:0;text-align:center;line-height:1.2;
+  font-size:14px;font-style:normal;
+  filter:drop-shadow(0 0 8px var(--c));
+}
+.wrow .w-body{flex:1;min-width:0}
+.wrow .w-line{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.wrow .w-name{
+  font-family:'Orbitron',sans-serif;font-size:9px;font-weight:700;letter-spacing:.16em;
+  color:#eaf8ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wrow .w-val{
+  font-family:'Orbitron',sans-serif;font-size:12px;font-weight:900;letter-spacing:.04em;
+  color:var(--c);text-shadow:0 0 12px rgba(90,216,255,.35);
+  flex-shrink:0;
+}
+/* the comparison itself — scaled to the top system, so the bar lengths are
+   the ranking before a single figure is read */
+.wrow .w-bar{height:3px;margin:5px 0 4px;background:rgba(90,216,255,.09)}
+.wrow .w-bar i{
+  display:block;height:100%;background:var(--c);
+  box-shadow:0 0 9px -1px var(--c);
+  transform-origin:left center;
+  animation:barGrow .5s cubic-bezier(.22,1.1,.36,1) both;
+}
+@keyframes barGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.wrow .w-sub{
+  font-family:'Orbitron',sans-serif;font-size:7.5px;font-weight:700;letter-spacing:.18em;
+  color:rgba(150,190,225,.45);
+}
+
+/* ---- hostiles: one line each, killed and leaked on the same track ---- */
+.hrow{
+  display:flex;align-items:center;gap:9px;padding:5px 0;
+  border-bottom:1px solid rgba(90,216,255,.06);
+}
+.hrow:last-child{border-bottom:none}
+.hrow .h-name{
+  width:62px;flex-shrink:0;
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;letter-spacing:.14em;
+  color:var(--c);
+}
+.hrow .h-bar{flex:1;min-width:0;display:flex;height:3px;background:rgba(90,216,255,.08)}
+.hrow .h-bar i{background:var(--c);box-shadow:0 0 8px -2px var(--c)}
+/* the leak rides on the end of the kill bar in breach red — what got through
+   is always read against what didn't */
+.hrow .h-bar u{background:var(--red);text-decoration:none;box-shadow:0 0 8px -2px var(--red)}
+.hrow .h-num{
+  min-width:36px;text-align:right;
+  font-family:'Orbitron',sans-serif;font-size:11px;font-weight:900;color:#eaf8ff;
+}
+.hrow .h-leak{
+  min-width:22px;text-align:right;
+  font-family:'Orbitron',sans-serif;font-size:9px;font-weight:700;
+  color:rgba(150,190,225,.3);
+}
+.hrow .h-leak.hot{color:var(--red);text-shadow:0 0 10px rgba(255,59,92,.5)}
+
+/* ---- analysis chips: the same stat-pod idea, shrunk to fit a dozen ---- */
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:6px}
+.chip{
+  padding:7px 8px 7px 10px;
+  background-color:rgba(90,216,255,.035);
+  background-image:linear-gradient(rgba(90,216,255,.4),rgba(90,216,255,.4));
+  background-repeat:no-repeat;background-size:2px 58%;background-position:left center;
+}
+.chip small{
+  display:block;
+  font-family:'Orbitron',sans-serif;font-size:7px;font-weight:700;letter-spacing:.2em;
+  color:rgba(150,190,225,.5);
+}
+.chip span{
+  display:block;margin-top:3px;
+  font-family:'Orbitron',sans-serif;font-size:15px;font-weight:900;color:#eaf8ff;
+  text-shadow:0 0 14px rgba(90,216,255,.45);
+}
+.chip em{
+  display:block;margin-top:2px;font-style:normal;
+  font-family:'Orbitron',sans-serif;font-size:7px;font-weight:700;letter-spacing:.14em;
+  color:rgba(90,216,255,.45);
+}
+
+/* ---- build: the picks, ranked by how deep the run went into each ---- */
+.bchips{display:flex;flex-wrap:wrap;gap:5px}
+.bchips + .bchips{margin-top:6px}
+.bchips.dim .bchip{opacity:.66}
+.bchip{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 7px 4px 8px;
+  background-color:rgba(6,16,32,.6);
+  background-image:linear-gradient(var(--c),var(--c));
+  background-repeat:no-repeat;background-size:2px 62%;background-position:left center;
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;letter-spacing:.12em;
+  color:rgba(234,248,255,.85);
+}
+.bchip i{font-style:normal;font-size:11px;filter:drop-shadow(0 0 6px var(--c))}
+.bchip b{font-weight:900;color:var(--c)}
+.bchip b::before{content:'\00d7';opacity:.6;margin-right:1px}
+
+/* a record is the reason to press REDEPLOY, so it stops being a quiet footer */
+.best.record{
+  color:var(--teal);text-shadow:0 0 16px rgba(63,240,200,.7);
+  animation:recordPulse 1.8s ease-in-out infinite;
+}
+@keyframes recordPulse{0%,100%{opacity:.75}50%{opacity:1}}
+
+@media (max-width:480px){
+  .rpt{max-height:min(42vh,320px);padding:10px}
+  .chips{grid-template-columns:repeat(auto-fill,minmax(90px,1fr))}
+  .chip span{font-size:13px}
+  .hrow .h-name{width:54px}
+}
