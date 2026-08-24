@@ -50,6 +50,7 @@ const BLAST_FISSION = 66;
 const MAX_CARRY = 1;               // overkill can be recycled, never amplified
 const MAX_BRITTLE = 1.2;
 const MAX_BLAST = 3;               // a blast wider than this covers the screen
+const MIN_MISSILE_CD = 2;          // the volley floor Smart Missiles works down toward
 
 /* ============================================================
    TOWER BASE STATS
@@ -332,7 +333,19 @@ const UPGRADES = [
   },
   {
     id: 'crit', name: 'Critical', icon: '💥', color: C.orange, max: 12, weight: 6,
-    desc: () => '+10% CRIT, +0.6x MULT',
+    /**
+     * The card changes character at the clamp rather than dying at it: chance
+     * stops moving, the multiplier does not. So the text has to change too —
+     * promising +10% CRIT to a build already at MAX_CRIT_CHANCE is selling
+     * something that cannot be delivered.
+     *
+     * Read off the tower, never off the level. Targeting Optics feeds the same
+     * stat, so which card level the clamp lands on depends on what was bought
+     * in the bay, and a level threshold hardcoded here would be wrong for
+     * exactly the players who invested most in crit.
+     */
+    desc: t => (t && t.critChance >= MAX_CRIT_CHANCE - 1e-6
+      ? '+0.6x CRIT MULTIPLIER' : '+10% CRIT, +0.6x MULT'),
     // still worth taking at the clamp — the multiplier keeps climbing
     apply: t => { t.critChance = Math.min(MAX_CRIT_CHANCE, t.critChance + 0.10); t.critMult += 0.6; },
   },
@@ -359,7 +372,11 @@ const UPGRADES = [
   {
     id: 'missiles', name: 'Smart Missiles', icon: '🚀', color: C.orange, max: 12, weight: 7,
     unlock: s => s.wave >= 3,
-    desc: (t, lv) => (lv === 1 ? '8 HOMING MISSILES' : '+4 MISSILES, FASTER VOLLEY'),
+    // Drops the cadence half of the claim once the volley is already at its
+    // floor, which the last level reaches — payload keeps coming, the cooldown
+    // does not, and only one of those should still be advertised.
+    desc: (t, lv) => (lv === 1 ? '8 HOMING MISSILES'
+      : (t && t.missileCd <= MIN_MISSILE_CD + 1e-6 ? '+4 MISSILES' : '+4 MISSILES, FASTER VOLLEY')),
     /**
      * Later levels buy cadence as well as payload. Stacking count alone made
      * the opening pick a wave-clear on its own; splitting the growth between
@@ -368,7 +385,7 @@ const UPGRADES = [
      */
     apply: (t, lv) => {
       t.missileCount += (lv === 1 ? 8 : 4);
-      if (lv > 1) t.missileCd = Math.max(2, t.missileCd * 0.94);
+      if (lv > 1) t.missileCd = Math.max(MIN_MISSILE_CD, t.missileCd * 0.94);
     },
   },
   {

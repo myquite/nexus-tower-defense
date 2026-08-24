@@ -109,9 +109,16 @@ const UI = {
   },
 
   /* ---------------- Upgrade screen ---------------- */
-  showUpgrades(wave, choices, levels, rerollsLeft, onPick, onReroll) {
+  /**
+   * Takes the game rather than a loose wave number so a card's desc can see
+   * the tower it is about to change. Several upgrades read differently once a
+   * stat they feed has clamped, and null was being passed where the tower
+   * belonged — which is why every card desc keyed off its level alone and none
+   * of them could tell the truth about a ceiling.
+   */
+  showUpgrades(g, choices, levels, rerollsLeft, onPick, onReroll) {
     const e = this.el;
-    e.upTitle.textContent = `WAVE ${wave} CLEARED`;
+    e.upTitle.textContent = `WAVE ${g.wave} CLEARED`;
     e.cards.innerHTML = '';
 
     choices.forEach((u, i) => {
@@ -126,7 +133,7 @@ const UI = {
         `<div class="lvl">${lv > 1 ? 'LV ' + lv : ''}</div>` +
         `<div class="ico">${u.icon}</div>` +
         `<div class="name">${u.name}</div>` +
-        `<div class="desc">${u.desc(null, lv)}</div>`;
+        `<div class="desc">${u.desc(g.t, lv)}</div>`;
       card.addEventListener('click', () => onPick(u));
       e.cards.appendChild(card);
     });

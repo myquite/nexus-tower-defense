@@ -170,7 +170,7 @@ class Game {
     if (picked.length === 0) picked.push(UPGRADE_BY_ID.damage);
 
     this.choices = picked;
-    UI.showUpgrades(this.wave, picked, this.perkLevels,
+    UI.showUpgrades(this, picked, this.perkLevels,
       this.rerolls,
       u => this.takeUpgrade(u),
       () => { if (this.rerolls > 0) { this.rerolls--; this.rollChoices(); } });
