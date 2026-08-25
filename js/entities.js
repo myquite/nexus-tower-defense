@@ -55,6 +55,7 @@ class Enemy {
     // otherwise strobe between frosted and clear as it drifts across the
     // boundary, which reads as a rendering fault rather than as cold.
     this.frost = 0;
+    this.frostT = 0;   // own clock, so facets glitter on their own schedule
     this.knockX = 0; this.knockY = 0;
     // Set only by Game.syncShield, for something the barrier came up around.
     // Never derived from position at contact time: the block clamps an enemy
@@ -147,6 +148,7 @@ class Enemy {
     // the effect is legible at a glance without a number anywhere near it.
     const want = this.isSlowed(g) ? clamp(0.35 + g.t.slowPct, 0, 1) : 0;
     this.frost += (want - this.frost) * (1 - Math.pow(0.02, dt));
+    if (this.frost > 0.02) this.frostT += dt;
 
     this.heading = Math.atan2(dy, dx);
     this.x += (dx / d) * spd * dt + this.knockX * dt;
@@ -257,19 +259,29 @@ class Enemy {
     if (this.frost > 0.03) {
       const f = this.frost;
       const arms = 6;
-      const rr = s * (1.2 + 0.1 * f);
+      // Drifts on its own clock rather than riding the hull's rotation, so the
+      // ice is something sitting ON the ship rather than part of it.
+      const spin = this.frostT * 0.55;
       neonStroke(ctx, c => {
         for (let i = 0; i < arms; i++) {
-          const a = (i / arms) * TAU + this.angle * 0.35;
-          // A broken arc plus a spike, not a closed ring: a full circle around
-          // a ship reads as a targeting reticle, where patches that do not
-          // quite meet read as something that has formed ON it.
-          c.arc(0, 0, rr, a - 0.20 * f, a + 0.20 * f);
-          const r1 = rr + s * 0.34 * f;
+          /**
+           * Each facet breathes on its own phase and vanishes entirely at its
+           * minimum, so the rime forms and melts in place instead of rotating
+           * as one rigid piece. The per-ship offset comes off spin, which is
+           * already random per enemy — otherwise a wave that arrived together
+           * would twinkle in unison and read as one blinking object.
+           */
+          const k = 0.5 + 0.5 * Math.sin(this.frostT * 2.6 + i * 2.4 + this.spin * 3);
+          const g0 = f * k;
+          if (g0 < 0.14) continue;
+          const a = (i / arms) * TAU + spin;
+          const rr = s * (1.1 + 0.07 * g0);
+          c.arc(0, 0, rr, a - 0.15 * g0, a + 0.15 * g0);
+          const r1 = rr + s * 0.26 * g0;
           c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
           c.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
         }
-      }, C.cyan, 0.9 + 0.8 * f, 2.6, 0.14 + 0.4 * f);
+      }, C.cyan, 0.75 + 0.5 * f, 2.4, 0.09 + 0.24 * f);
     }
 
     switch (this.form) {
