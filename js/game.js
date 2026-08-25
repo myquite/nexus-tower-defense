@@ -406,12 +406,16 @@ class Game {
     const paid = e.cash * this.t.cashMult;
     this.cash += paid;
     Stats.earned += paid;
-    if (this.t.lifesteal) {
+    if (this.t.lifesteal && this.t.shieldMax > 0) {
+      // Shards are worth a fraction, the same way they are worth a fraction of
+      // the salvage and the HP — otherwise the splitter's three pieces would
+      // pay a siphon better than the splitter did.
+      const gain = this.t.lifesteal * (e.sizeMul < 1 ? 0.4 : 1);
       // banked as what was actually restored, not what was offered — a siphon
-      // at full health heals nothing
-      const before = this.t.hp;
-      this.t.hp = Math.min(this.t.maxHp, this.t.hp + this.t.lifesteal);
-      Stats.healed += this.t.hp - before;
+      // into a full barrier recovers nothing
+      const before = this.t.shieldHp;
+      this.t.shieldHp = Math.min(this.t.shieldMax, this.t.shieldHp + gain);
+      Stats.siphoned += this.t.shieldHp - before;
     }
     this.burst(e.x, e.y, e.color, e.boss ? 40 : (e.sizeMul < 1 ? 5 : 10), e.boss ? 2.6 : 1);
     if (e.boss) { this.shake(18); this.rings.push(new Ring(e.x, e.y, 150, C.pink, 0.6)); }

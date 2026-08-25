@@ -83,7 +83,7 @@ function baseTower() {
     maxHp: 140,
     hp: 140,
     regen: 0,
-    lifesteal: 0,           // hp restored per kill
+    lifesteal: 0,           // shield restored per kill — Siphon, needs a barrier
     thorns: 0,              // fraction of an attacker burned, and of its hit soaked
 
     // orbiting blades
@@ -369,14 +369,38 @@ const UPGRADES = [
     apply: t => { t.maxHp += 60; t.hp = t.maxHp; },
   },
   {
+    // The hull's own repair, and now the only card that mends it — Siphon
+    // moved to the barrier so the two stopped competing for the same job.
     id: 'regen', name: 'Nanorepair', icon: '♻️', color: C.teal, max: 12, weight: 6,
-    desc: () => '+2 HP PER SECOND',
+    desc: () => '+2 HULL HP PER SECOND',
     apply: t => { t.regen += 2; },
   },
   {
-    id: 'lifesteal', name: 'Siphon', icon: '🩸', color: C.pink, max: 10, weight: 4,
-    desc: () => 'HEAL 1.5 HP PER KILL',
-    apply: t => { t.lifesteal += 1.5; },
+    /**
+     * An ENERGY siphon, not a blood one: kills feed the barrier, never the
+     * hull. Nanorepair already mends the hull, and two cards quietly doing the
+     * same job meant one of them was always the worse pick — splitting them
+     * gives each a system of its own.
+     *
+     * It is also the barrier's only recharge that is earned rather than
+     * bought. Shield Recharge costs salvage and Field Regenerator pays out
+     * between waves; this one pays DURING one, which is the moment the wall is
+     * actually being spent.
+     *
+     * Values are an order up from the old lifesteal because the pool is: a
+     * barrier holds 1800 and up where the hull holds a few hundred, so 1.5 a
+     * kill would have been invisible.
+     *
+     * Eight levels, not ten, because ten recovered more than a shallow
+     * barrier's whole capacity in a single wave — a wall that cannot fail is
+     * not a resource any more, and the barrier is only interesting while it
+     * can still be spent. Maxed it returns about 90% of one, so a bad wave
+     * still takes it down.
+     */
+    id: 'lifesteal', name: 'Siphon', icon: '🔋', color: C.cyan, max: 8, weight: 4,
+    unlock: s => s.t.shieldMax > 0,
+    desc: (t, lv) => (lv === 1 ? 'KILLS RECHARGE THE BARRIER' : '+3 SHIELD PER KILL'),
+    apply: t => { t.lifesteal += 3; },
   },
   {
     id: 'orbs', name: 'Orbs', icon: '🔵', color: C.cyan, max: 12, weight: 7,

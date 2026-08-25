@@ -494,6 +494,7 @@ const UI = {
     // ARMOUR SHRUGGED they show up exactly when they mean something.
     if (S.shielded > 0) chip('SHIELD ABSORBED', fmt(S.shielded),
       S.collapses + (S.collapses === 1 ? ' COLLAPSE' : ' COLLAPSES'));
+    if (S.siphoned > 0) chip('SHIELD SIPHONED', fmt(S.siphoned), 'RECOVERED FROM KILLS');
     chip('PEAK HOSTILES', S.peak);
     chip('DAMAGE TAKEN', fmt(S.taken), S.breaches + ' BREACHES');
     chip('HP REPAIRED', fmt(S.healed));

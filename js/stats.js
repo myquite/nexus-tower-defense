@@ -76,6 +76,7 @@ const Stats = {
     // what it soaked is the honest measure of it — core HP never records the
     // hits that never reached the core.
     this.shielded = 0;                   // damage the barrier ate instead of the core
+    this.siphoned = 0;                   // barrier charge recovered from kills
     this.collapses = 0;                  // times the wall was spent to nothing
     this.time = 0;                       // seconds actually in combat, menus excluded
     this.rounds = 0; this.critShots = 0; // rounds fired, and how many rolled crit
