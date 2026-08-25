@@ -56,6 +56,7 @@ class Enemy {
     // boundary, which reads as a rendering fault rather than as cold.
     this.frost = 0;
     this.frostT = 0;   // own clock, so facets glitter on their own schedule
+    this.frostEmit = 0;// countdown to the next mote shed behind it
     this.knockX = 0; this.knockY = 0;
     // Set only by Game.syncShield, for something the barrier came up around.
     // Never derived from position at contact time: the block clamps an enemy
@@ -149,6 +150,12 @@ class Enemy {
     const want = this.isSlowed(g) ? clamp(0.35 + g.t.slowPct, 0, 1) : 0;
     this.frost += (want - this.frost) * (1 - Math.pow(0.02, dt));
     if (this.frost > 0.02) this.frostT += dt;
+    // Rate rides the frost, so a ship entering the field starts shedding
+    // gradually rather than switching on a plume the instant it crosses.
+    if (this.frost > 0.2) {
+      this.frostEmit -= dt * this.frost;
+      if (this.frostEmit <= 0) { this.frostEmit = FROST_EMIT; g.frostMote(this); }
+    }
 
     this.heading = Math.atan2(dy, dx);
     this.x += (dx / d) * spd * dt + this.knockX * dt;
@@ -254,7 +261,13 @@ class Enemy {
     ctx.rotate(this.dir ? this.heading : this.angle);
 
     /**
-     * Rime. Drawn UNDER the hull and in the hull's own rotation, so it reads
+     * Rime. Now the quiet half of the effect: the trail carries the motion,
+     * but motes come out of a capped pool that combat can exhaust, so this is
+     * what guarantees a frozen ship still reads as frozen when the field is
+     * too busy to spare a particle. Deliberately faint enough to be felt
+     * rather than seen.
+     *
+     * Drawn UNDER the hull and in the hull's own rotation, so it reads
      * as ice forming on this ship rather than as a marker floating near it —
      * and so the silhouette that tells you what the thing IS survives being
      * frozen. Type colour is never replaced for the same reason: a frosted
@@ -288,7 +301,7 @@ class Enemy {
           c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
           c.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
         }
-      }, C.cyan, 0.75 + 0.5 * f, 2.4, 0.09 + 0.24 * f);
+      }, C.cyan, 0.7 + 0.35 * f, 2.2, 0.05 + 0.13 * f);
     }
 
     switch (this.form) {

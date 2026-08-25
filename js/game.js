@@ -1,6 +1,14 @@
 'use strict';
 
 const MAX_PARTICLES = 420;
+/*
+   Frost is ambience and kill bursts are feedback, and they draw on the same
+   pool. So frost gets a reserved slice of it and yields everything above that
+   line — a busy field must never be able to swallow the particles that tell
+   you something died.
+*/
+const FROST_BUDGET = Math.round(MAX_PARTICLES * 0.45);
+const FROST_EMIT = 0.22;           // seconds between motes, at full frost
 
 /* ============================================================
    GAME
@@ -258,6 +266,29 @@ class Game {
   spark(x, y, color, life) {
     if (this.particles.length > MAX_PARTICLES) return;
     this.particles.push(this.particlePool.get().init(x, y, rand(-40, 40), rand(-40, 40), life || 0.4, rand(2, 4), color));
+  }
+
+  /**
+   * A mote shed behind a frozen ship. Emitted behind its heading rather than
+   * around it, so the field reads as vapour coming off things that are being
+   * dragged through it — a slow ship trailing frost says "held" in a way a
+   * static marker cannot.
+   */
+  frostMote(e) {
+    if (this.particles.length > FROST_BUDGET) return;
+    const a = e.heading + Math.PI + rand(-0.55, 0.55);
+    // The motes carry their own speed rather than inheriting the ship's. A
+    // frozen ship is barely moving by definition, so a wake that depended on
+    // its motion would be about twenty pixels long — the vapour has to come
+    // off under its own steam or the effect argues with the mechanic.
+    const sp = rand(28, 72);
+    this.particles.push(this.particlePool.get().init(
+      e.x + Math.cos(a) * e.size * 0.55, e.y + Math.sin(a) * e.size * 0.55,
+      Math.cos(a) * sp, Math.sin(a) * sp,
+      rand(0.6, 1.35), rand(1.8, 3.4),
+      // mostly ice-blue with the occasional white fleck, so the trail has
+      // some grain to it instead of reading as one flat colour
+      Math.random() < 0.25 ? '#dff4ff' : C.cyan));
   }
 
   burst(x, y, color, count, power) {
