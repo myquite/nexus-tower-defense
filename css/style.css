@@ -293,7 +293,9 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 #shopScreen .up-inner{
   margin-top:var(--anchor);
   padding:0 16px;
-  max-width:520px;
+  /* wide enough for a fourth column, which is what lands all thirteen tiles
+     inside one screen — the entire reason for the grid */
+  max-width:720px;
 }
 
 /* wallet echoes the canvas salvage pod: same glyph, same teal, micro-caps */
@@ -309,16 +311,27 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
    thing it succeeds, with an elbow connecting them. The whole point is that a
    MAX row is visibly followed by something, so the indent and the elbow are
    load-bearing furniture, not decoration. */
+/* ---- the bay ----
+   A grid, not a list. Thirteen tiles is a menu, and a menu wants to be
+   surveyed; stacked rows put most of the stock below the fold, and a shop you
+   must scroll to see is a shop you buy the top of. auto-fill lets the same
+   rule give three columns on a desktop and two on a handset without a
+   breakpoint deciding it. */
 .shop-list{
-  --arm:16px; --brk:rgba(90,216,255,.55);
-  --step:14px;              /* one rung of lineage indent */
+  --brk:rgba(90,216,255,.55);
   position:relative;
-  margin-top:18px;
-  display:flex;flex-direction:column;gap:0;
-  max-height:min(44vh,380px);overflow-y:auto;
-  padding:8px 10px 10px;
+  margin-top:14px;
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(148px,1fr));
+  gap:7px;
+  align-content:start;
+  /* The last term is the one that matters on a short handset: the bay is
+     anchored well down the screen, so a pure vh cap can still push NEXT WAVE
+     off the bottom of a 667px phone even while looking fine on an 844px one. */
+  max-height:min(60vh,520px,calc(100vh - 285px));
+  overflow-y:auto;overflow-x:hidden;
+  padding:10px;
   background-color:rgba(6,16,32,.6);
-  /* keep the frame pinned while the manifest scrolls inside it */
   background-attachment:local,local,local,local,local,local,local,local,scroll;
   animation:visorFade .3s .12s ease-out both;
 }
@@ -326,76 +339,92 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 .shop-list::-webkit-scrollbar-thumb{background:rgba(90,216,255,.28);border-radius:0}
 .shop-list::-webkit-scrollbar-track{background:transparent}
 
-/* ---- line header: the quietest thing on the screen ----
-   It only has to say which track you are looking at, so it is a rule with a
-   word set into it — dimmer than any label, which are already dimmer than any
-   value. */
-.bay-line{
-  display:flex;align-items:center;gap:8px;
-  margin:13px 0 4px;
-  animation:rowDeploy .3s backwards cubic-bezier(.22,1.15,.36,1);
-}
-.bay-line:first-child{margin-top:2px}
-.bl-name{
-  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
-  letter-spacing:.34em;color:rgba(150,205,240,.5);
-}
-.bl-rule{flex:1;height:1px;background:rgba(90,216,255,.16)}
-
-/* ---- rows: edge tick + hairline, no frame of their own ---- */
-.shop-row{
+/* ---- tiles ---- */
+.bay-tile{
+  --arm:7px; --brk:rgba(90,216,255,.16);
   position:relative;
-  display:flex;align-items:center;gap:9px;
-  padding:8px 2px 8px calc(11px + var(--d,0) * var(--step));
-  border:none;border-radius:0;
-  background-color:transparent;
+  display:flex;flex-direction:column;gap:2px;
+  padding:6px 8px 7px;
+  min-width:0;
+  text-align:left;   /* the icon is a glyph in a block, so it needs saying */
+  background-color:rgba(8,20,38,.55);
+  /* the accent lives on the top edge, where it labels the tile without
+     stealing width from text that has none to spare at two columns */
   background-image:linear-gradient(var(--c),var(--c));
   background-repeat:no-repeat;
-  background-size:2px 56%;
-  /* the accent tick sits at the row's own indent, so the tick column itself
-     traces the shape of the line */
-  background-position:calc(var(--d,0) * var(--step)) center;
-  text-align:left;
+  background-size:100% 2px;
+  background-position:top left;
   transition:background-color .13s;
   animation:rowDeploy .3s backwards cubic-bezier(.22,1.15,.36,1);
 }
-/* borders BETWEEN siblings only — a trailing hairline stacked under a line
-   header would read as a double rule */
-.shop-row + .shop-row,
-.shop-row + .shop-x,
-.shop-x + .shop-row{border-top:1px solid rgba(90,216,255,.09)}
-.shop-row:hover{background-color:rgba(90,216,255,.045)}
+.bay-tile:hover{background-color:rgba(16,40,70,.7)}
 
-/* ---- the lineage elbow ----
-   Hairline corner from the parent's tick down into this row's icon, plus a
-   head so it reads as "leads to" rather than "grouped with". */
-.s-elb{
-  position:absolute;left:calc((var(--d) - 1) * var(--step) + 1px);
-  top:-1px;width:calc(var(--step) - 3px);height:calc(50% + 1px);
-  border-left:1px solid var(--c);
-  border-bottom:1px solid var(--c);
-  opacity:.42;pointer-events:none;
-}
-.s-elb::after{
-  content:'';position:absolute;right:-2px;bottom:-3.5px;
-  border-left:4px solid var(--c);
-  border-top:3.5px solid transparent;border-bottom:3.5px solid transparent;
+@keyframes rowDeploy{
+  from{opacity:0;transform:translateY(6px)}
+  to{opacity:1;transform:none}
 }
 
-/* ---- a newly unlocked item, on the one visit that introduces it ----
-   Lines put arrivals wherever their track is rather than at the top, so this
-   now carries the whole job of catching the eye (the list scrolls it into view
-   to meet it halfway). The tick down the left edge is the row's existing
-   motif, just turned up. */
-.shop-row.is-new{
-  background-color:rgba(90,216,255,.05);
-  background-size:2px 100%;
+.bay-tile .t-top{
+  display:flex;align-items:baseline;justify-content:space-between;gap:6px;
+  min-height:9px;
 }
-.shop-row .s-new{
+.bay-tile .t-line{
+  font-family:'Orbitron',sans-serif;font-size:7px;font-weight:700;
+  letter-spacing:.18em;color:var(--c);opacity:.62;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.bay-tile .t-lvl{
+  font-family:'Orbitron',sans-serif;font-size:7px;font-weight:700;
+  letter-spacing:.14em;color:rgba(190,225,255,.5);white-space:nowrap;
+}
+.bay-tile .t-ico{
+  font-size:18px;line-height:1;margin-top:1px;
+  filter:drop-shadow(0 0 8px var(--c));
+}
+.bay-tile .t-name{
+  font-family:'Orbitron',sans-serif;font-size:9px;font-weight:700;
+  letter-spacing:.1em;text-transform:uppercase;color:#eaf8ff;
+  display:flex;align-items:center;gap:5px;flex-wrap:wrap;line-height:1.25;
+}
+.bay-tile .t-desc{
+  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
+  letter-spacing:.02em;color:var(--c);opacity:.8;line-height:1.28;
+  margin-bottom:4px;
+}
+/* pinned to the floor of the tile so every price in a row lines up, however
+   many lines the name above it needed */
+.bay-tile .buy{margin-top:auto;width:100%;min-width:0}
+
+/* where a capped line continues — a signpost inside the tile, not a row of
+   its own, because it is not a thing you buy here */
+.bay-tile .t-then{
+  margin-top:5px;padding-top:5px;
+  border-top:1px solid rgba(90,216,255,.12);
+  font-family:'Orbitron',sans-serif;font-size:7px;font-weight:700;
+  letter-spacing:.12em;color:var(--t);opacity:.85;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.bay-tile .t-then::before{content:'\21b3 ';opacity:.7}
+
+/* a silhouette keeps the grid regular — a gap would read as nothing there,
+   where the point is that there IS something there and it is coming */
+.bay-tile.is-locked{
+  background-image:none;
+  background-color:rgba(6,14,28,.4);
+  --brk:rgba(120,150,180,.14);
+}
+.bay-tile.is-locked .t-ico{filter:none;opacity:.45}
+.bay-tile.is-locked .t-name{color:rgba(190,215,240,.42);letter-spacing:.16em}
+.bay-tile.is-locked .t-desc{color:rgba(160,190,220,.38);opacity:1}
+.bay-tile.is-locked .t-line{color:rgba(150,180,210,.32)}
+
+/* a newly unlocked tile, on the one visit that introduces it */
+.bay-tile.is-new{background-color:rgba(90,216,255,.06);--brk:var(--c)}
+.bay-tile .s-new{
   font-family:'Orbitron',sans-serif;
-  font-size:7px;font-weight:700;letter-spacing:.2em;
+  font-size:6.5px;font-weight:700;letter-spacing:.16em;
   color:#03121f;background:var(--c);
-  padding:2px 5px 1px;
+  padding:2px 4px 1px;
   animation:newPulse 1.6s ease-in-out infinite;
 }
 @keyframes newPulse{
@@ -403,78 +432,10 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
   50%{opacity:.55}
 }
 
-/* ---- the locked next step ----
-   A silhouette: it states its condition and nothing else. No name, no cost, no
-   button — unlocking it still has to be a reveal, and the row exists to say
-   "the line does not end here", not to spoil what is at the end of it. */
-.shop-row.is-locked{
-  background-image:none;      /* no accent tick: it isn't stock yet */
-  cursor:default;
-}
-.shop-row.is-locked:hover{background-color:transparent}
-.shop-row.is-locked .s-elb{opacity:.2}
-.shop-row.is-locked .s-ico{
-  font-size:13px;filter:none;opacity:.45;
-}
-.shop-row.is-locked .s-name{
-  color:rgba(190,225,255,.4);font-size:9px;letter-spacing:.2em;
-}
-.shop-row .s-req{
-  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
-  letter-spacing:.14em;color:rgba(150,205,240,.34);
-}
-
-/* ---- where a capped line continues ----
-   A pointer, not a node: the item is bought in its own track and a second buy
-   chip for it here would be two rows for one purchase. */
-.shop-x{
-  position:relative;
-  display:flex;align-items:center;gap:7px;
-  padding:6px 2px 6px calc(11px + var(--d,0) * var(--step));
-  font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;
-  letter-spacing:.16em;color:rgba(150,205,240,.42);
-  animation:rowDeploy .3s backwards cubic-bezier(.22,1.15,.36,1);
-}
-.shop-x i{font-style:normal;font-size:11px;opacity:.7;filter:drop-shadow(0 0 7px var(--c))}
-.shop-x b{
-  font-weight:700;color:var(--c);opacity:.85;
-  margin-left:7px;padding:1px 5px;
-  border:1px solid var(--c);
-}
-
-/* ---- more below the fold ----
-   The bay outgrew one screen once the late unlocks landed, and a hard-cropped
-   last row reads as the end of the list. Only applied when there is genuinely
-   more to reach. */
+/* more below the fold — only when there genuinely is */
 .shop-list.has-more{
-  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);
-  mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);
-}
-
-/* rows print in from the left, like a manifest listing out */
-@keyframes rowDeploy{
-  from{opacity:0;transform:translateX(-10px)}
-  to{opacity:1;transform:none}
-}
-
-.shop-row .s-ico{
-  font-size:18px;line-height:1;width:22px;text-align:center;flex-shrink:0;
-  filter:drop-shadow(0 0 9px var(--c));
-}
-.shop-row .s-txt{flex:1;min-width:0}
-.shop-row .s-name{
-  font-family:'Orbitron',sans-serif;font-size:10px;font-weight:700;
-  letter-spacing:.16em;text-transform:uppercase;color:#eaf8ff;
-  display:flex;align-items:center;flex-wrap:wrap;gap:4px 7px;
-}
-.shop-row .s-lvl{
-  font-size:8px;font-weight:700;letter-spacing:.16em;
-  color:rgba(190,225,255,.42);
-  border:none;border-radius:0;padding:0;
-}
-.shop-row .s-desc{
-  font-family:'Orbitron',sans-serif;font-size:9px;font-weight:700;
-  letter-spacing:.06em;color:var(--c);opacity:.82;margin-top:3px;
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent);
 }
 
 /* ---- buy chip ---- */
@@ -493,17 +454,20 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 .buy.maxed{--brk:rgba(150,180,210,.22);color:rgba(200,225,245,.3);cursor:default}
 
 /* ---- narrow visors ----
-   Two rungs of indent plus an icon plus a buy chip is the widest the bay ever
-   gets, and at 390px that has to fit without a single character wrapping or
-   clipping. Everything gives a little rather than one thing giving a lot. */
+   Two columns is the floor: one would be a list again, and the whole point of
+   the grid is seeing the stock at a glance. So the tile minimum drops far
+   enough that 354px of usable width still splits, and everything inside gives
+   a little rather than one thing giving a lot. */
 @media (max-width:430px){
-  .shop-list{--step:11px;padding:8px 8px 10px}
-  .shop-row{gap:8px;padding-right:0}
-  .shop-row .s-ico{font-size:17px;width:19px}
-  .shop-row .s-name{font-size:9px;letter-spacing:.11em}
-  .shop-row .s-desc{font-size:8px;letter-spacing:.03em}
-  .buy{min-width:66px;padding:7px 6px;font-size:9px;letter-spacing:.08em}
-  .shop-x{font-size:7px;letter-spacing:.1em}
+  .shop-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:7px}
+  /* Two columns means seven rows of stock, so every pixel of tile height is
+     paid for seven times over — worth trimming hard here and nowhere else. */
+  .bay-tile{padding:5px 6px 6px;gap:1px}
+  .bay-tile .t-ico{font-size:15px}
+  .bay-tile .t-name{font-size:8.5px;letter-spacing:.06em}
+  .bay-tile .t-desc{font-size:7.5px;letter-spacing:0;margin-bottom:3px}
+  .bay-tile .t-line,.bay-tile .t-lvl{font-size:6.5px;letter-spacing:.12em}
+  .buy{min-width:0;padding:5px 4px;font-size:8.5px;letter-spacing:.05em}
 }
 
 /* ---- next wave: the one affirmative control, so it gets the teal ---- */
@@ -534,9 +498,7 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 #shopNextBtn:active{transform:scale(.98)}
 
 @media (max-width:620px){
-  .shop-row{gap:8px;padding:8px 2px 8px 10px}
-  .shop-row .s-ico{font-size:17px;width:20px}
-  .buy{min-width:66px;padding:7px 7px;font-size:9px}
+  .buy{padding:7px 6px;font-size:9px}
 }
 
 /* ============================================================
