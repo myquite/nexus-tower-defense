@@ -53,6 +53,16 @@ const MAX_BLAST = 3;               // a blast wider than this covers the screen
 const MIN_MISSILE_CD = 2;          // the volley floor Smart Missiles works down toward
 const MIN_RAY_CHARGE = 1.1;        // the death ray never becomes a continuous beam again
 const NOVA_WIND = 0.42;            // seconds the plating draws in before a shockwave
+/*
+   Reactive Plating is a FRACTION of the attacker, never a flat number, so it
+   rides the wave curve instead of decaying against it. It must stay strictly
+   below 1: contact is the only thing in the game that damages the core, so a
+   plating that soaked all of a hit would make the tower unkillable outright.
+   The opening level is worth two, the way Orbs and Missiles open, so the first
+   pick is a real decision rather than a down payment; four more of 0.12 land
+   exactly on the ceiling, so no level is ever dead.
+*/
+const MAX_THORNS = 0.72;
 
 /* ============================================================
    TOWER BASE STATS
@@ -74,7 +84,7 @@ function baseTower() {
     hp: 140,
     regen: 0,
     lifesteal: 0,           // hp restored per kill
-    thorns: 0,              // damage reflected on contact
+    thorns: 0,              // fraction of an attacker burned, and of its hit soaked
 
     // orbiting blades
     orbCount: 0,
@@ -441,10 +451,26 @@ const UPGRADES = [
     apply: t => { t.slowPct = Math.min(MAX_SLOW, t.slowPct + 0.18); },
   },
   {
-    id: 'thorns', name: 'Reactive Plating', icon: '🜲', color: C.purple, max: 8, weight: 4,
+    /**
+     * Scales off the attacker rather than off a flat number it can never
+     * update. At 45 damage a level it covered grunts to about wave 8, and all
+     * eight levels — a third of the picks in a run — bought grunts to wave 18
+     * and a boss never. A fraction of the thing hitting you costs the same at
+     * wave 25 as at wave 5.
+     *
+     * And it both burns and soaks, because burning alone is all-or-nothing:
+     * the attacker is discarded on contact whatever its health, so damage that
+     * failed to kill was simply thrown away, and a level that could not finish
+     * a leaker outright was worth exactly zero. Soaking the same fraction of
+     * the blow gives every level something to do on the hits it cannot stop.
+     */
+    id: 'thorns', name: 'Reactive Plating', icon: '🜲', color: C.purple, max: 5, weight: 4,
     unlock: s => s.wave >= 3,
-    desc: () => 'BURN ATTACKERS ON CONTACT',
-    apply: t => { t.thorns += 45; },
+    capped: s => s.t.thorns >= MAX_THORNS - 1e-6,
+    desc: (t, lv) => (lv === 1 ? 'BURN AND BLUNT ATTACKERS' : '+12% BURN, +12% SOAK'),
+    apply: (t, lv) => {
+      t.thorns = Math.min(MAX_THORNS, t.thorns + (lv === 1 ? 0.24 : 0.12));
+    },
   },
   {
     id: 'cash', name: 'Salvager', icon: '◈', color: C.teal, max: 8, weight: 4,

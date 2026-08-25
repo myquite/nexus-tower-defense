@@ -198,14 +198,21 @@ class Enemy {
        * making the whole upgrade a no-op. Burn it down first and the hit never
        * lands, which is what "burn attackers on contact" should buy you.
        */
+      let blow = this.dmg;
       if (g.t.thorns > 0) {
+        // A share of the attacker, so this never falls behind the wave curve.
+        const burn = this.maxHp * g.t.thorns;
         // Reports itself, because it is the one damage source that never
         // reaches hurt() — see above for why it cannot be made to.
-        Stats.hit(SRC.THORNS, g.t.thorns, this.hp);
-        this.hp -= g.t.thorns;
+        Stats.hit(SRC.THORNS, burn, this.hp);
+        this.hp -= burn;
         if (this.hp <= 0) { g.killEnemy(this); return; }   // stopped short of the core
+        // Survived — but the plating still met it, so it still blunts the hit.
+        // Without this the burn was binary: anything short of a kill was
+        // discarded along with the attacker and bought nothing at all.
+        blow *= 1 - g.t.thorns;
       }
-      g.damageTower(this.dmg, this);
+      g.damageTower(blow, this);
       g.burst(this.x, this.y, this.color, this.boss ? 26 : 12, 1.4);
       g.shake(this.boss ? 16 : 7);
       this.dead = true;   // detonates on the core — no kill credit
