@@ -51,6 +51,7 @@ const MAX_CARRY = 1;               // overkill can be recycled, never amplified
 const MAX_BRITTLE = 1.2;
 const MAX_BLAST = 3;               // a blast wider than this covers the screen
 const MIN_MISSILE_CD = 2;          // the volley floor Smart Missiles works down toward
+const MIN_RAY_CHARGE = 1.1;        // the death ray never becomes a continuous beam again
 
 /* ============================================================
    TOWER BASE STATS
@@ -97,10 +98,12 @@ function baseTower() {
     meteorDmg: 55,
     meteorRadius: 96,
 
-    // death ray
+    // death ray — a charged sweep, not a permanent blender
     rayCount: 0,
-    rayDps: 130,
+    rayDps: 300,            // only paid out during the burst, not continuously
     raySpeed: 0.55,
+    rayChargeTime: 2.2,     // seconds spent spinning up between blasts
+    rayBurst: 0.9,          // seconds the beam is actually live
 
     // shockwave nova
     novaCd: 5,
@@ -399,10 +402,26 @@ const UPGRADES = [
     apply: (t, lv) => { t.meteorCount += 1; if (lv > 1) t.meteorCd = Math.max(1.2, t.meteorCd * 0.9); },
   },
   {
+    /**
+     * A charged weapon, not a permanent one. Left always-on it was simply the
+     * best card in the game — an unbroken blender bolted to the core that
+     * asked nothing of the player and never stopped. Cycling it costs the
+     * uptime that made it that, and buys something better: a wind-up the
+     * player can see, and a discharge worth watching.
+     *
+     * The old text promised an instant kill it never delivered. It is a
+     * sustained beam and always was, so it now says what it does.
+     */
     id: 'ray', name: 'Death Ray', icon: '☀️', color: C.gold, max: 8, weight: 5,
     unlock: s => s.wave >= 4,
-    desc: (t, lv) => (lv === 1 ? 'INSTANT-KILL BEAM' : '+1 SWEEPING BEAM'),
-    apply: t => { t.rayCount += 1; },
+    desc: (t, lv) => (lv === 1 ? 'CHARGES, THEN SWEEPS' : '+1 BEAM, FASTER CHARGE'),
+    apply: (t, lv) => {
+      t.rayCount += 1;
+      // Levels buy cadence as well as beams, so a deep investment spends less
+      // of its life waiting — the floor keeps it from ever going continuous
+      // again, which is the whole point of the rework.
+      if (lv > 1) t.rayChargeTime = Math.max(MIN_RAY_CHARGE, t.rayChargeTime * 0.94);
+    },
   },
   {
     id: 'nova', name: 'Shockwave', icon: '💠', color: C.cyan, max: 12, weight: 6,

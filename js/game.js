@@ -74,6 +74,10 @@ class Game {
     this.meteorCd = 0;
     this.novaCd = 0;
     this.rayAngle = 0;
+    this.rayT = 0;        // seconds into the current phase
+    this.rayOn = false;   // true while the beam is actually live
+    this.rayCharge = 0;   // 0..1 spin-up, read by the core's capacitor ring
+    this.rayFlash = 0;    // kicks to 1 the instant a beam fires, decays
     this.orbAngle = 0;
     this.rangePulse = 0;
     this.shieldFlash = 0;     // kicks to 1 on each impact, decays
@@ -613,10 +617,31 @@ class Game {
     this.shake(6);
   }
 
+  /**
+   * The emitters keep sweeping the whole time; only the beam is intermittent.
+   * That is what makes the wind-up readable — the array is visibly tracking
+   * across the field while it charges, so when it fires the player already
+   * knows where it is pointed rather than being surprised by it.
+   */
   updateRays(dt) {
     const t = this.t;
     if (t.rayCount <= 0) return;
     this.rayAngle += t.raySpeed * dt;
+    this.rayFlash = Math.max(0, this.rayFlash - dt * 2.4);
+
+    this.rayT += dt;
+    if (this.rayOn) {
+      if (this.rayT >= t.rayBurst) { this.rayOn = false; this.rayT = 0; }
+    } else {
+      this.rayCharge = clamp(this.rayT / t.rayChargeTime, 0, 1);
+      if (this.rayT >= t.rayChargeTime) {
+        this.rayOn = true; this.rayT = 0; this.rayCharge = 1;
+        this.rayFlash = 1;
+        this.shake(3);
+      }
+    }
+    if (!this.rayOn) return;   // charging: the array turns, but nothing burns
+
     const len = t.range * 1.15;
     const width = 13;
     for (let i = 0; i < t.rayCount; i++) {
@@ -856,23 +881,49 @@ class Game {
     ctx.restore();
   }
 
+  /**
+   * Three states, and the middle one is the point. While charging there is
+   * nothing but a hairline sight down each emitter, which only starts to show
+   * in the last stretch of the wind-up — a telegraph, so the discharge reads
+   * as the end of something rather than as a beam blinking on at random.
+   *
+   * The beam itself flares at the instant of firing and settles over the burst,
+   * because a weapon that looks identical for the whole of its uptime does not
+   * look like it fired, it looks like it is on.
+   */
   drawRays(ctx) {
     const t = this.t;
     if (t.rayCount <= 0) return;
     const len = t.range * 1.15;
+    const aim = this.rayCharge;
     ctx.save();
     ctx.lineCap = 'round';
     for (let i = 0; i < t.rayCount; i++) {
       const a = this.rayAngle + (i / t.rayCount) * TAU;
       const ex = this.cx + Math.cos(a) * len, ey = this.cy + Math.sin(a) * len;
+
+      if (!this.rayOn) {
+        // Only the last third of the wind-up telegraphs, so most of the cycle
+        // stays visually quiet and the tell means something when it arrives.
+        if (aim < 0.66) continue;
+        const k = (aim - 0.66) / 0.34;
+        ctx.strokeStyle = C.gold;
+        ctx.globalAlpha = 0.05 + 0.3 * k * k;
+        ctx.lineWidth = 1 + k;
+        ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
+        continue;
+      }
+
+      const f = this.rayFlash;
+      ctx.globalAlpha = 1;
       ctx.strokeStyle = 'rgba(255,203,51,.18)';
-      ctx.lineWidth = 34;
+      ctx.lineWidth = 34 + 26 * f;
       ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
       ctx.strokeStyle = 'rgba(255,203,51,.42)';
-      ctx.lineWidth = 16;
+      ctx.lineWidth = 16 + 12 * f;
       ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
       ctx.strokeStyle = '#fff6d2';
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 + 5 * f;
       ctx.beginPath(); ctx.moveTo(this.cx, this.cy); ctx.lineTo(ex, ey); ctx.stroke();
     }
     ctx.restore();
@@ -1027,6 +1078,30 @@ class Game {
       const a0 = -Math.PI / 2;
       neonStroke(ctx, c => c.arc(0, 0, R * 0.86, a0, a0 + charge * TAU),
         charge > 0.985 ? C.white : C.gold, 2, 3, 0.35 + 0.5 * charge);
+    }
+
+    /**
+     * ---- ray capacitors: one pip per emitter, filling as the beam winds up
+     * The gun already owns the sweeping ring at R * 0.86 and the gold that
+     * goes with it, so this reads at a different radius and by COUNT rather
+     * than by sweep — pips light one after another, which says "storing" where
+     * an arc would just say "waiting" again. Kept dim on purpose: it is a
+     * second clock on a core that already has one, and it earns its place by
+     * being glanceable, not by competing.
+     */
+    if (this.t.rayCount > 0) {
+      const pips = Math.min(this.t.rayCount, 8);
+      const lit = this.rayCharge * pips;
+      for (let i = 0; i < pips; i++) {
+        const a = -Math.PI / 2 + (i / pips) * TAU;
+        // the pip mid-fill glows partially, so the ring animates continuously
+        // instead of stepping between whole pips
+        const k = clamp(lit - i, 0, 1);
+        const on = this.rayOn ? 1 : k;
+        neonStroke(ctx, c => c.arc(Math.cos(a) * R * 0.60, Math.sin(a) * R * 0.60,
+          1.1 + 1.1 * on, 0, TAU),
+          this.rayOn ? C.white : C.gold, 1.2 + 1.4 * on, 2.2, 0.16 + 0.62 * on);
+      }
     }
 
     /* ---- core: brightens as it comes up to charge ---- */
