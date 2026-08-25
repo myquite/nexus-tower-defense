@@ -898,6 +898,20 @@ class Game {
     const aim = this.rayCharge;
     ctx.save();
     ctx.lineCap = 'round';
+
+    // A bloom at the origin, under the beams. Without it the beams merely
+    // start at the core's coordinates; with it they leave from the core, which
+    // is the difference between a weapon firing and lines appearing.
+    if (this.rayOn) {
+      const f = this.rayFlash;
+      const rad = 30 + 66 * f;
+      const grd = ctx.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, rad);
+      grd.addColorStop(0, `rgba(255,246,210,${(0.5 + 0.4 * f).toFixed(3)})`);
+      grd.addColorStop(0.45, `rgba(255,203,51,${(0.22 + 0.3 * f).toFixed(3)})`);
+      grd.addColorStop(1, 'rgba(255,203,51,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(this.cx, this.cy, rad, 0, TAU); ctx.fill();
+    }
     for (let i = 0; i < t.rayCount; i++) {
       const a = this.rayAngle + (i / t.rayCount) * TAU;
       const ex = this.cx + Math.cos(a) * len, ey = this.cy + Math.sin(a) * len;
@@ -1081,26 +1095,43 @@ class Game {
     }
 
     /**
-     * ---- ray capacitors: one pip per emitter, filling as the beam winds up
-     * The gun already owns the sweeping ring at R * 0.86 and the gold that
-     * goes with it, so this reads at a different radius and by COUNT rather
-     * than by sweep — pips light one after another, which says "storing" where
-     * an arc would just say "waiting" again. Kept dim on purpose: it is a
-     * second clock on a core that already has one, and it earns its place by
-     * being glanceable, not by competing.
+     * ---- ray charge: the core drawing power in
+     * Read on the CORE itself, not as a gauge beside it, because the core is
+     * where the beams leave from — a wind-up that happens somewhere else
+     * belongs to a different object than the discharge does, and the two stop
+     * reading as one weapon.
+     *
+     * Rings falling inward rather than an arc sweeping round: an arc is a
+     * clock and says "waiting", where something collapsing toward the middle
+     * says "gathering". They fall on charge SQUARED, so the last moment before
+     * release is visibly the fastest and the core looks like it is straining.
      */
-    if (this.t.rayCount > 0) {
-      const pips = Math.min(this.t.rayCount, 8);
-      const lit = this.rayCharge * pips;
-      for (let i = 0; i < pips; i++) {
-        const a = -Math.PI / 2 + (i / pips) * TAU;
-        // the pip mid-fill glows partially, so the ring animates continuously
-        // instead of stepping between whole pips
-        const k = clamp(lit - i, 0, 1);
-        const on = this.rayOn ? 1 : k;
-        neonStroke(ctx, c => c.arc(Math.cos(a) * R * 0.60, Math.sin(a) * R * 0.60,
-          1.1 + 1.1 * on, 0, TAU),
-          this.rayOn ? C.white : C.gold, 1.2 + 1.4 * on, 2.2, 0.16 + 0.62 * on);
+    if (t.rayCount > 0) {
+      const rc = this.rayCharge;
+      if (!this.rayOn && rc > 0.02) {
+        const RINGS = 3;
+        for (let k = 0; k < RINGS; k++) {
+          // phase-offset, so one ring is always near the core and the inflow
+          // reads as continuous rather than as three separate pulses
+          const p = ((rc * rc * 2.4) + k / RINGS) % 1;
+          // Starts outside the plating and ends inside the core, so the ring
+          // is seen to cross the whole tower and arrive rather than just
+          // existing somewhere in the middle of it.
+          const rr = R * (2.05 - 1.75 * p);
+          neonStroke(ctx, c => c.arc(0, 0, rr, 0, TAU),
+            p > 0.82 ? C.white : C.gold, 1.1 + 2.3 * p, 2.6, (0.06 + 0.7 * p * p) * rc);
+        }
+      }
+      // The core heats gold as it fills and blows to white on release, so the
+      // brightest thing on screen at the instant of firing is the emitter.
+      const g0 = this.rayOn ? 1 : rc;
+      neonStroke(ctx, c => c.arc(0, 0, R * (0.26 + 0.10 * g0), 0, TAU),
+        this.rayOn ? C.white : C.gold, 1.4 + 3.2 * g0, 3, 0.10 + 0.62 * g0);
+      // the release itself: one ring thrown back out, the inflow reversed
+      if (this.rayFlash > 0.01) {
+        const k = 1 - this.rayFlash;
+        neonStroke(ctx, c => c.arc(0, 0, R * (0.3 + 1.7 * k), 0, TAU),
+          C.white, 1 + 2.6 * this.rayFlash, 3, 0.75 * this.rayFlash);
       }
     }
 
