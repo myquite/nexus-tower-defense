@@ -51,6 +51,10 @@ class Enemy {
       : rand(-1.6, 1.6);
     this.flash = 0;
     this.slowT = 0;
+    // Eased rather than boolean: an enemy on the edge of the field would
+    // otherwise strobe between frosted and clear as it drifts across the
+    // boundary, which reads as a rendering fault rather than as cold.
+    this.frost = 0;
     this.knockX = 0; this.knockY = 0;
     // Set only by Game.syncShield, for something the barrier came up around.
     // Never derived from position at contact time: the block clamps an enemy
@@ -137,6 +141,12 @@ class Enemy {
     // cryo field
     if (g.t.slowPct > 0 && d < g.t.range) spd *= (1 - g.t.slowPct);
     if (this.slowT > 0) { this.slowT -= dt; spd *= 0.45; }
+
+    // Rime builds and thaws instead of switching. The target is the slow's own
+    // strength, so a shallow field frosts lightly and a deep one glazes over —
+    // the effect is legible at a glance without a number anywhere near it.
+    const want = this.isSlowed(g) ? clamp(0.35 + g.t.slowPct, 0, 1) : 0;
+    this.frost += (want - this.frost) * (1 - Math.pow(0.02, dt));
 
     this.heading = Math.atan2(dy, dx);
     this.x += (dx / d) * spd * dt + this.knockX * dt;
@@ -233,6 +243,34 @@ class Enemy {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.dir ? this.heading : this.angle);
+
+    /**
+     * Rime. Drawn UNDER the hull and in the hull's own rotation, so it reads
+     * as ice forming on this ship rather than as a marker floating near it —
+     * and so the silhouette that tells you what the thing IS survives being
+     * frozen. Type colour is never replaced for the same reason: a frosted
+     * tank still has to read as a tank.
+     *
+     * One path, one neonStroke. This runs for every slowed enemy on screen and
+     * late waves have well over a hundred, so it gets two strokes, not eight.
+     */
+    if (this.frost > 0.03) {
+      const f = this.frost;
+      const arms = 6;
+      const rr = s * (1.2 + 0.1 * f);
+      neonStroke(ctx, c => {
+        for (let i = 0; i < arms; i++) {
+          const a = (i / arms) * TAU + this.angle * 0.35;
+          // A broken arc plus a spike, not a closed ring: a full circle around
+          // a ship reads as a targeting reticle, where patches that do not
+          // quite meet read as something that has formed ON it.
+          c.arc(0, 0, rr, a - 0.20 * f, a + 0.20 * f);
+          const r1 = rr + s * 0.34 * f;
+          c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+          c.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+        }
+      }, C.cyan, 0.9 + 0.8 * f, 2.6, 0.14 + 0.4 * f);
+    }
 
     switch (this.form) {
 

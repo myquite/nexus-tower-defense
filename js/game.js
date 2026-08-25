@@ -73,6 +73,8 @@ class Game {
     this.chainCd = 0;
     this.meteorCd = 0;
     this.novaCd = 0;
+    this.novaWind = 0;    // 0..1 plating drawing in before a shockwave
+    this.novaPulse = 0;   // kicks to 1 as it releases, decays — the plating punch
     this.rayAngle = 0;
     this.rayT = 0;        // seconds into the current phase
     this.rayOn = false;   // true while the beam is actually live
@@ -605,12 +607,28 @@ class Game {
     }
   }
 
+  /**
+   * The shockwave used to arrive out of nowhere — a ring simply existed, with
+   * nothing on the tower to say it had come from there. Now the plating winds
+   * in ahead of it and snaps out as it releases, so the shells are visibly the
+   * thing that threw the wave rather than something it passed through.
+   *
+   * NOVA_WIND is the anticipation window. Kept short: the shockwave is on a
+   * cooldown the player does not control, so a long tell would read as the
+   * tower flinching constantly rather than as a weapon winding up.
+   */
   fireNova(dt) {
     const t = this.t;
-    if (t.novaDmg <= 0) return;
+    if (t.novaDmg <= 0) { this.novaWind = 0; return; }
     this.novaCd -= dt;
+    // drawn in tighter the closer the release is, eased so the last moments
+    // move fastest and the snap has something to snap from
+    const w = clamp((NOVA_WIND - this.novaCd) / NOVA_WIND, 0, 1);
+    this.novaWind = w * w;
     if (this.novaCd > 0) return;
     this.novaCd = t.novaCd;
+    this.novaWind = 0;
+    this.novaPulse = 1;
     const r = t.range * 0.9;
     this.areaDamage(this.cx, this.cy, r, t.novaDmg, C.cyan, t.novaKnock, SRC.NOVA);
     this.rings.push(new Ring(this.cx, this.cy, r, C.cyan, 0.55));
@@ -690,6 +708,7 @@ class Game {
     for (const d of this.drifters) d.update(dt, this.w, this.h);
     this.hitFlash = Math.max(0, this.hitFlash - dt * 2.6);
     this.shieldFlash = Math.max(0, this.shieldFlash - dt * 3.2);
+    this.novaPulse = Math.max(0, this.novaPulse - dt * 3.4);
     this.shakeAmt *= Math.pow(0.0008, dt);
     this.rangePulse += dt;
 
@@ -1051,14 +1070,24 @@ class Game {
     ctx.save();
     ctx.translate(this.cx, this.cy);
 
-    /* ---- integrity plating: six shells that burn out as the core is hit ---- */
+    /* ---- integrity plating: six shells that burn out as the core is hit,
+            and that throw the shockwave when there is one to throw ---- */
+    // One radius for all six, so they move as a single shell rather than six
+    // plates that happen to agree. Winding in is small and the release is
+    // large: the punch has to outweigh the tell or it reads as a stumble.
+    const plate = R * 1.36 * (1 - 0.11 * this.novaWind + 0.34 * this.novaPulse);
+    const plateLit = 0.6 * this.novaPulse + 0.25 * this.novaWind;
     for (let i = 0; i < 6; i++) {
       const lit = clamp(hpFrac * 6 - i, 0, 1);
       if (lit <= 0.002) continue;
-      const a0 = (i / 6) * TAU + 0.13;
-      const a1 = ((i + 1) / 6) * TAU - 0.13;
-      neonStroke(ctx, c => c.arc(0, 0, R * 1.36, a0, a1),
-        lit > 0.4 ? C.teal : C.red, 2.2, 3, 0.22 + 0.5 * lit);
+      // the gaps close as the shells draw in, so the ring looks like it seals
+      // before it fires and blows apart as it lets go
+      const gap = 0.13 * (1 - 0.55 * this.novaWind) + 0.1 * this.novaPulse;
+      const a0 = (i / 6) * TAU + gap;
+      const a1 = ((i + 1) / 6) * TAU - gap;
+      neonStroke(ctx, c => c.arc(0, 0, plate, a0, a1),
+        this.novaPulse > 0.15 ? C.cyan : (lit > 0.4 ? C.teal : C.red),
+        2.2 + 2.4 * this.novaPulse, 3, clamp(0.22 + 0.5 * lit + plateLit, 0, 1));
     }
 
     /* ---- gyro: outer shell fixed, inner rings spun by the real fire rate ---- */

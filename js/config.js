@@ -52,6 +52,7 @@ const MAX_BRITTLE = 1.2;
 const MAX_BLAST = 3;               // a blast wider than this covers the screen
 const MIN_MISSILE_CD = 2;          // the volley floor Smart Missiles works down toward
 const MIN_RAY_CHARGE = 1.1;        // the death ray never becomes a continuous beam again
+const NOVA_WIND = 0.42;            // seconds the plating draws in before a shockwave
 
 /* ============================================================
    TOWER BASE STATS
