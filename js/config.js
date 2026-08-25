@@ -731,6 +731,15 @@ const SHOP = [
   },
   {
     /**
+     * Priced off the wave, not off a flat base. Every other item in the bay
+     * has been climbing its own curve since wave 1, so by the time it is deep
+     * the next level costs thousands — but a successor arrives at level zero
+     * in the late game with a base tuned for the early one, and five levels of
+     * it used to cost about a single wave of income. That is not a discount,
+     * it is a hole: the reward for reaching a ceiling was a stat that could be
+     * bought out the moment it appeared.
+     */
+    /**
      * Coolant's successor, and the answer to a gun that physically cannot
      * cycle any faster.
      *
@@ -744,7 +753,7 @@ const SHOP = [
     id: 'velocity', name: 'Muzzle Velocity', icon: '➶', color: C.gold, max: 10,
     line: 'RATE', after: 'coolant',
     desc: () => '+18% SHOT SPEED',
-    cost: lv => Math.round(70 * Math.pow(1.4, lv)),
+    cost: (lv, g) => Math.round((40 + 15 * g.wave) * Math.pow(1.4, lv)),
     // only sold once the gun has hit the wall Coolant runs into
     hidden: t => t.fireRate < MAX_FIRE_RATE - 1e-6,
     // 10 levels is exactly where 620 x 1.18^n reaches MAX_BULLET_SPEED, so the
@@ -770,7 +779,7 @@ const SHOP = [
     // into as many hits as there are bodies in 66px, so in the crowds this is
     // sold into it is worth several times a flat damage buy — measured at
     // roughly 2x total output by the third level.
-    cost: lv => Math.round(130 * Math.pow(1.5, lv)),
+    cost: (lv, g) => Math.round((35 + 30 * g.wave) * Math.pow(1.5, lv)),
     hidden: t => t.critChance < MAX_CRIT_CHANCE - 1e-6,
     apply: t => { t.critBlast += 0.14; },
   },
@@ -821,7 +830,7 @@ const SHOP = [
     line: 'RANGE', after: 'lens',
     then: 'overclock',
     desc: () => '+12% BLAST RADIUS',
-    cost: lv => Math.round(80 * Math.pow(1.45, lv)),
+    cost: (lv, g) => Math.round((34 + 12 * g.wave) * Math.pow(1.45, lv)),
     hidden: (t, g) => t.range < g.maxThreatDistance(),
     capped: t => t.blastMult >= MAX_BLAST - 1e-6,
     apply: t => { t.blastMult = Math.min(MAX_BLAST, t.blastMult * 1.12); },
@@ -842,7 +851,7 @@ const SHOP = [
     line: 'RATE', after: 'velocity',
     then: 'overclock',
     desc: () => 'OVERKILL CARRIES ON +15%',
-    cost: lv => Math.round(150 * Math.pow(1.5, lv)),
+    cost: (lv, g) => Math.round((33 + 15 * g.wave) * Math.pow(1.5, lv)),
     hidden: t => t.bulletSpeed < MAX_BULLET_SPEED - 1e-6,
     capped: t => t.carry >= MAX_CARRY - 1e-6,
     apply: t => { t.carry = Math.min(MAX_CARRY, t.carry + 0.15); },
