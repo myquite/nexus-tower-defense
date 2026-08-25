@@ -54,6 +54,16 @@ const MIN_MISSILE_CD = 2;          // the volley floor Smart Missiles works down
 const MIN_RAY_CHARGE = 1.1;        // the death ray never becomes a continuous beam again
 const NOVA_WIND = 0.42;            // seconds the plating draws in before a shockwave
 /*
+   Orbs were the only weapon whose engagement envelope was a bare constant.
+   Every other one derives from t.range — the gun gates on it, Shockwave uses
+   range * 0.9, the Death Ray range * 1.15 — so a Range build made every weapon
+   reach further except this one, and Orbs got quietly worse the more the tower
+   improved. A card that punishes you for upgrading is worse than a weak card,
+   because you cannot see it coming when you pick it.
+*/
+const ORB_RANGE_FRAC = 0.3;        // orbit radius as a share of range, past the old fixed one
+const ORB_MAX_LINEAR = 560;        // px/s a blade may sweep before it can step over a hull
+/*
    Reactive Plating is a FRACTION of the attacker, never a flat number, so it
    rides the wave curve instead of decaying against it. It must stay strictly
    below 1: contact is the only thing in the game that damages the core, so a

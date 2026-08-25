@@ -711,18 +711,46 @@ class Game {
     }
   }
 
+  /**
+   * Where the blades actually orbit. Floored at the radius they have always
+   * had, so nothing about the early game changes, and scaled off range past
+   * that so the ring keeps meeting traffic instead of being left behind by
+   * every other weapon.
+   *
+   * Held inside the barrier when there is one, so the defensive layers read
+   * outward in the order they engage: core, blades, wall, guns.
+   */
+  orbRing() {
+    const t = this.t;
+    let r = Math.max(t.orbRadius, t.range * ORB_RANGE_FRAC);
+    // enough clearance that the blades read as their own picket rather than
+    // as decoration riding the wall
+    if (t.shieldMax > 0) r = Math.min(r, this.shieldRing() - 42);
+    return clamp(r, t.orbRadius, Math.min(this.w, this.h) * 0.38);
+  }
+
   updateOrbs(dt) {
     if (!this.orbs.length) return;
     const t = this.t;
-    this.orbAngle += t.orbSpeed * dt;
+    const ring = this.orbRing();
+    /**
+     * Angular speed is derived from a LINEAR one, because linear is what
+     * decides whether a blade can step clean over a hull between frames. Left
+     * as a fixed angular rate the blades would sweep faster and faster as the
+     * ring grew and eventually pass through enemies without touching them.
+     * They do get quicker with radius — up to the cap — which is what stops a
+     * wider ring from simply meaning wider gaps.
+     */
+    const linear = Math.min(t.orbSpeed * ring, ORB_MAX_LINEAR);
+    this.orbAngle += (linear / ring) * dt;
     for (const e of this.enemies) {
       if (e.dead) continue;
       e.orbCd = (e.orbCd || 0) - dt;
       if (e.orbCd > 0) continue;
       for (const o of this.orbs) {
         const a = this.orbAngle + o.a;
-        const ox = this.cx + Math.cos(a) * t.orbRadius;
-        const oy = this.cy + Math.sin(a) * t.orbRadius;
+        const ox = this.cx + Math.cos(a) * ring;
+        const oy = this.cy + Math.sin(a) * ring;
         const r = 11 + e.size * 0.5;
         if (dist2(ox, oy, e.x, e.y) < r * r) {
           e.hurt(t.orbDmg, this, false, SRC.ORB);
@@ -1059,13 +1087,13 @@ class Game {
   }
 
   drawOrbs(ctx) {
-    const t = this.t;
     if (!this.orbs.length) return;
+    const ring = this.orbRing();
     ctx.save();
     for (const o of this.orbs) {
       const a = this.orbAngle + o.a;
-      const x = this.cx + Math.cos(a) * t.orbRadius;
-      const y = this.cy + Math.sin(a) * t.orbRadius;
+      const x = this.cx + Math.cos(a) * ring;
+      const y = this.cy + Math.sin(a) * ring;
       ctx.fillStyle = C.cyan;
       ctx.globalAlpha = 0.28;
       ctx.beginPath(); ctx.arc(x, y, 20, 0, TAU); ctx.fill();
