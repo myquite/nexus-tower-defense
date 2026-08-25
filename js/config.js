@@ -469,7 +469,7 @@ const UPGRADES = [
     },
   },
   {
-    id: 'cryo', name: 'Cryo Field', icon: '❄️', color: C.cyan, max: 6, weight: 5,
+    id: 'cryo', name: 'Cryo Field', icon: '❄️', color: C.cyan, max: 4, weight: 5,
     capped: s => s.t.slowPct >= MAX_SLOW - 1e-6,
     desc: () => 'SLOW EVERYTHING NEARBY',
     apply: t => { t.slowPct = Math.min(MAX_SLOW, t.slowPct + 0.18); },
@@ -708,7 +708,7 @@ const SHOP = [
     },
   },
   {
-    id: 'coolant', name: 'Coolant', icon: '⏱️', color: C.gold, max: 99,
+    id: 'coolant', name: 'Coolant', icon: '⏱️', color: C.gold, max: 35,
     line: 'RATE',
     desc: () => '+10% FIRE RATE',
     cost: lv => Math.round(55 * Math.pow(1.55, lv)),
@@ -850,7 +850,7 @@ const SHOP = [
      * was never the thing that stalled — doubling up on it here would quietly
      * pay the Range line twice for the same purchase.
      */
-    id: 'blast', name: 'Blast Calibration', icon: '◉', color: C.cyan, max: 12,
+    id: 'blast', name: 'Blast Calibration', icon: '◉', color: C.cyan, max: 10,
     line: 'RANGE', after: 'lens',
     then: 'overclock',
     desc: () => '+12% BLAST RADIUS',
