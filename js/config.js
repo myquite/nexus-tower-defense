@@ -863,11 +863,22 @@ const SHOP = [
      * the w² shape of income is what pins buys/wave flat, and 1.9w² settles it
      * near 2.5 — just under the 2.96 break-even, so the wall closes in slowly
      * once the card pool dries up rather than never arriving at all.
+     *
+     * cashMult is in the price for the same reason w² is. Salvager is +35% per
+     * level to eight levels, so it scales income by up to 3.8x, and against a
+     * price blind to it that multiplied buys per wave by the same 3.8 — three
+     * cards alone carry 2.5/wave over the break-even to 4.2 and the run stops
+     * ending again. Every other item is capped, so Salvager still does its job
+     * there: it buys out Damage Core, Coolant and the repairs sooner. This is
+     * the one uncapped sink, and it is the one place where a pure income
+     * multiplier would turn straight back into an unbounded damage multiplier.
+     * The row does get dearer when Salvager is taken, which reads oddly for a
+     * moment — but the alternative is a salvage build that cannot lose.
      */
     id: 'overclock', name: 'Overclock', icon: '⏦', color: C.red, max: Infinity,
     line: 'WEAPON', after: 'core',
     desc: () => '+8% DAMAGE, NO LIMIT',
-    cost: (lv, g) => Math.round(120 + 45 * g.wave + 1.9 * g.wave * g.wave),
+    cost: (lv, g) => Math.round((120 + 45 * g.wave + 1.9 * g.wave * g.wave) * g.t.cashMult),
     // Hidden early: before the shop starts pricing itself out there is nothing
     // for this to solve, and an uncapped buy would just warp the opening.
     hidden: (t, g) => g.wave < OVERCLOCK_WAVE,
