@@ -283,19 +283,34 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
    a wall of boxes.
    ============================================================ */
 #shopScreen{
-  --anchor:140px;
-  align-items:flex-start;
+  /* One clearance, spent equally top and bottom, because a band with 156px
+     above and 26px below reads as top-anchored no matter how the column is
+     aligned inside it. Sized to clear the live HUD rather than the ring line:
+     the wave counter and the pause/audio controls at the top, the core bar at
+     the bottom. It passes under the ring arc, which is drawn furniture the
+     panel is allowed to sit over — and it hands the bay more height than the
+     old lopsided band did, not less. */
+  --clear:100px;
+  align-items:stretch;
+  padding:var(--clear) 0;
   background:rgba(3,8,18,.32);
   backdrop-filter:blur(1.5px);
 }
-@media (max-width:620px){ #shopScreen{--anchor:156px} }
+@media (max-width:620px){ #shopScreen{--clear:84px} }
 
 #shopScreen .up-inner{
-  margin-top:var(--anchor);
   padding:0 16px;
   /* wide enough for a fourth column, which is what lands all thirteen tiles
      inside one screen — the entire reason for the grid */
   max-width:720px;
+  /* A column bounded by the band, not by vh. The overlay is inset:0 on #stage,
+     so this height is what the handset actually shows — where 100vh on iOS is
+     the toolbar-hidden height and overstates it by about a toolbar, which is
+     how NEXT WAVE ended up below the bottom of a screen with no way to scroll.
+     Centred, because the bay only fills the band when it has the stock to; a
+     short one should sit in the middle of its space rather than hang off the
+     top of it. */
+  display:flex;flex-direction:column;justify-content:center;min-height:0;
 }
 
 /* wallet echoes the canvas salvage pod: same glyph, same teal, micro-caps */
@@ -325,10 +340,11 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
   grid-template-columns:repeat(auto-fill,minmax(148px,1fr));
   gap:7px;
   align-content:start;
-  /* The last term is the one that matters on a short handset: the bay is
-     anchored well down the screen, so a pure vh cap can still push NEXT WAVE
-     off the bottom of a 667px phone even while looking fine on an 844px one. */
-  max-height:min(60vh,520px,calc(100vh - 285px));
+  /* Free to grow into the band it was handed, and free to shrink out of it:
+     the cap only stops a half-empty bay from inflating on a big desktop, and
+     the shrink is what keeps NEXT WAVE on screen when stock outgrows a phone. */
+  max-height:min(74vh,620px);
+  flex:0 1 auto;min-height:0;
   overflow-y:auto;overflow-x:hidden;
   padding:10px;
   background-color:rgba(6,16,32,.6);
@@ -459,7 +475,10 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
    enough that 354px of usable width still splits, and everything inside gives
    a little rather than one thing giving a lot. */
 @media (max-width:430px){
-  .shop-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:7px}
+  /* A handset has no room to waste on a cap: the band is the only limit that
+     should be deciding how much of the bay you can see at once. */
+  .shop-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:7px;
+    max-height:none}
   /* Two columns means seven rows of stock, so every pixel of tile height is
      paid for seven times over — worth trimming hard here and nowhere else. */
   .bay-tile{padding:5px 6px 6px;gap:1px}
@@ -473,6 +492,8 @@ canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch
 /* ---- next wave: the one affirmative control, so it gets the teal ---- */
 #shopNextBtn{
   --arm:14px; --brk:var(--teal);
+  /* the column's fixed member: it keeps its size and the bay yields instead */
+  flex:none;align-self:center;
   margin-top:18px;padding:11px 30px;
   background-color:rgba(6,20,32,.7);
   background-image:none;
