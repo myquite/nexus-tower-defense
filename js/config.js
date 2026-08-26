@@ -339,7 +339,25 @@ function waveScale(wave) {
    ============================================================ */
 const UPGRADES = [
   {
-    id: 'damage', name: 'Damage', icon: '⚔️', color: C.red, max: 99, weight: 10,
+    /**
+     * 22 levels, not 99. This is what sets how long a run lasts.
+     *
+     * A pick is one card per wave, so 99 levels meant up to 99 straight waves
+     * of x1.4 against a 1.2561x HP curve — about 11% of compounding headroom
+     * banked every wave for the first hundred. That peaked around wave 113 at
+     * roughly ten billion times more damage than the wave needed, and since
+     * the decline past the peak only bleeds ~3.6% a wave, burning that lead
+     * off ran to wave 434: near four hours, of which the last two were spent
+     * winning slowly enough that nothing appeared to be happening.
+     *
+     * Capping the climb caps the peak, and the peak is what the tail has to
+     * burn through. 22 puts the summit near wave 36 and the loss near wave
+     * 103 — about fifty minutes, one sitting. Nothing about the difficulty
+     * curve moves to achieve it: enemy HP, the late ramp and the wave 5 wall
+     * are all exactly as they were. The card simply stops being offered once
+     * it is done, which hands its slot to the rest of the pool.
+     */
+    id: 'damage', name: 'Damage', icon: '⚔️', color: C.red, max: 22, weight: 10,
     desc: () => '+40% DAMAGE',
     apply: t => {
       t.damage *= 1.4; t.orbDmg *= 1.4; t.missileDmg *= 1.4;
