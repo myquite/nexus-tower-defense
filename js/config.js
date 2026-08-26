@@ -841,10 +841,9 @@ const SHOP = [
      *
      * Every other item is priced at roughly x1.5 per level owned, so it prices
      * itself out around level 10-12 — a Damage Core at level 15 costs about
-     * seventeen waves of income. Salvage income, meanwhile, is close to linear
-     * in the wave number while enemy HP compounds at 1.185^wave. The result is
-     * a late game where the Salvage Bay has quietly stopped mattering and the
-     * cards carry the entire run.
+     * seventeen waves of income. Enemy HP, meanwhile, compounds at 1.185^wave.
+     * The result is a late game where the Salvage Bay has quietly stopped
+     * mattering and the cards carry the entire run.
      *
      * So this one is priced off the WAVE instead of off how many you own.
      * Income per wave and cost per wave then grow together, which holds the
@@ -852,11 +851,23 @@ const SHOP = [
      * multiplicative buys per wave is itself an exponential, which is the only
      * shape that can stay with the HP curve. It stays deliberately behind that
      * curve: this is meant to keep salvage relevant, not to replace the cards.
+     *
+     * The QUADRATIC term is what actually delivers that. Salvage income is not
+     * linear in the wave, which is what a linear price assumed: cash per kill
+     * rises linearly (1 + 0.16w) but the spawn count rises with it (2.5w plus
+     * w^1.22), and the two multiply out to roughly 4.7w². Against a merely
+     * linear price the buys per wave therefore GREW without bound — 3/wave at
+     * wave 30, 19/wave by 190, 65/wave by 600 — and since 2.96 buys/wave is
+     * already enough to tie the HP curve, the run stopped being winnable by
+     * the enemy at about wave 30 and could never end. Matching the price to
+     * the w² shape of income is what pins buys/wave flat, and 1.9w² settles it
+     * near 2.5 — just under the 2.96 break-even, so the wall closes in slowly
+     * once the card pool dries up rather than never arriving at all.
      */
     id: 'overclock', name: 'Overclock', icon: '⏦', color: C.red, max: Infinity,
     line: 'WEAPON', after: 'core',
     desc: () => '+8% DAMAGE, NO LIMIT',
-    cost: (lv, g) => Math.round(120 + 45 * g.wave),
+    cost: (lv, g) => Math.round(120 + 45 * g.wave + 1.9 * g.wave * g.wave),
     // Hidden early: before the shop starts pricing itself out there is nothing
     // for this to solve, and an uncapped buy would just warp the opening.
     hidden: (t, g) => g.wave < OVERCLOCK_WAVE,
