@@ -64,6 +64,23 @@ const NOVA_WIND = 0.42;            // seconds the plating draws in before a shoc
 const ORB_RANGE_FRAC = 0.3;        // orbit radius as a share of range, past the old fixed one
 const ORB_MAX_LINEAR = 560;        // px/s a blade may sweep before it can step over a hull
 /*
+   The barrier is a hard positional stop: nothing is ever inside it while it
+   holds. Blades parked inside the wall therefore had nothing whatsoever to
+   touch, and Orbs read as a dead card for the entire life of a barrier — the
+   one upgrade that turned another upgrade off. So when a wall exists the ring
+   is pushed to its OUTER face, where the traffic actually stalls.
+
+   The clearance is NOT a taste value. An enemy pinned by the wall sits at
+   shieldRing + size*0.5, and a blade hits within 11 + size*0.5, so the ring
+   only sweeps that band while clearance < 11 + size. The smallest hull in the
+   game is the swift at 11 (a split shard is 14 * 0.85 = 11.9), which caps this
+   at 22 — anything larger would let precisely the fast swarm you want blades
+   for stream past untouched, while still connecting on tanks and bosses. 16
+   clears every hull with margin at both ends and keeps the blades reading as
+   riding the wall's outer face rather than floating past it.
+*/
+const ORB_WALL_CLEAR = 16;         // px the ring sits outside the barrier, when there is one
+/*
    Reactive Plating is a FRACTION of the attacker, never a flat number, so it
    rides the wave curve instead of decaying against it. It must stay strictly
    below 1: contact is the only thing in the game that damages the core, so a

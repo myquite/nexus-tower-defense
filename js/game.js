@@ -717,15 +717,23 @@ class Game {
    * that so the ring keeps meeting traffic instead of being left behind by
    * every other weapon.
    *
-   * Held inside the barrier when there is one, so the defensive layers read
-   * outward in the order they engage: core, blades, wall, guns.
+   * Pushed to the OUTER face of the barrier when there is one, because the
+   * wall is a hard positional stop and everything worth hitting is stalled
+   * against its far side. The defensive layers read outward in the order they
+   * engage: core, wall, blades, guns.
    */
   orbRing() {
     const t = this.t;
-    let r = Math.max(t.orbRadius, t.range * ORB_RANGE_FRAC);
-    // enough clearance that the blades read as their own picket rather than
-    // as decoration riding the wall
-    if (t.shieldMax > 0) r = Math.min(r, this.shieldRing() - 42);
+    /**
+     * A wall PINS the ring rather than merely flooring it. Range must not push
+     * the blades outward here: while the barrier holds, every enemy is stalled
+     * against its face, so a wider ring would sweep open space just past the
+     * traffic and hit nothing — the same dead card in the other direction. The
+     * arena clamp is skipped for the same reason, since shieldRing() is
+     * already clamped to the arena and the band is wherever it ended up.
+     */
+    if (t.shieldMax > 0) return this.shieldRing() + ORB_WALL_CLEAR;
+    const r = Math.max(t.orbRadius, t.range * ORB_RANGE_FRAC);
     return clamp(r, t.orbRadius, Math.min(this.w, this.h) * 0.38);
   }
 
